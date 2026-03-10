@@ -29,8 +29,8 @@ namespace CyberpunkGenerator.Economy
                     { Retail(GoodType.LuxuryFurniture), 2f },
                     { Retail(GoodType.SimRealSets), 10f },
                     { Retail(GoodType.Automobiles), 5f },
-                    { Retail(GoodType.MedicalCare), 100f },
-                    { Retail(GoodType.Security), 100f },
+                    { Retail(GoodType.MedicalCare), 2f },
+                    { Retail(GoodType.Security), 5f },
                     { Retail(GoodType.LuxuryCybernetics), 5f },
                     { Retail(GoodType.GeneticTailoring), 2f }
                 }
@@ -45,8 +45,8 @@ namespace CyberpunkGenerator.Economy
                     { Retail(GoodType.Furniture), 0.5f },
                     { Retail(GoodType.LuxuryFurniture), 0.5f },
                     { Retail(GoodType.HoloScreens), 10f },
-                    { Retail(GoodType.MedicalCare), 50f },
-                    { Retail(GoodType.Security), 50f },
+                    { Retail(GoodType.MedicalCare), 1f },
+                    { Retail(GoodType.Security), 2f },
                     { Retail(GoodType.Automobiles), 2f },
                     { Retail(GoodType.BasicCybernetics), 5f }
                 }
@@ -59,8 +59,8 @@ namespace CyberpunkGenerator.Economy
                     { Retail(GoodType.Clothes), 10f },
                     { Retail(GoodType.Furniture), 0.5f },
                     { Retail(GoodType.PersonalTerminals), 5f },
-                    { Retail(GoodType.MedicalCare), 20f },
-                    { Retail(GoodType.Security), 20f },
+                    { Retail(GoodType.MedicalCare), 0.5f },
+                    { Retail(GoodType.Security), 0.5f },
                     { Retail(GoodType.BasicCybernetics), 2f }
                 }
             },
@@ -480,26 +480,26 @@ namespace CyberpunkGenerator.Economy
                 // ==========================================
                 // --- SERVICES ---
                 // ==========================================
-                case "Corporate Hospital":
+                case "Corp-Med Clinic":
                     b.ZoneType = BusinessZoneType.Commercial;
                     b.TargetClass = PopSocioeconomicClass.WhiteCollar;
-                    b.Outputs.Add(Retail(GoodType.MedicalCare), 500f);
-                    b.InputGoods.Add(Wholesale(GoodType.MedicalEquipment), 100f);
-                    b.InputGoods.Add(Wholesale(GoodType.CorporateServices), 50f);
-                    b.InputGoods.Add(Wholesale(GoodType.Electricity), 300f);
-                    b.RequiredLabor.Add(JobRole.WhiteCollarScience, 30);
-                    b.RequiredLabor.Add(JobRole.BlueCollarScience, 20);
+                    b.Outputs.Add(Retail(GoodType.MedicalCare), 250f); // Tuned for throughput
+                    b.InputGoods.Add(Wholesale(GoodType.MedicalEquipment), 50f);
+                    b.InputGoods.Add(Wholesale(GoodType.CorporateServices), 10f);
+                    b.InputGoods.Add(Wholesale(GoodType.Electricity), 100f);
+                    b.RequiredLabor.Add(JobRole.WhiteCollarScience, 15);
+                    b.RequiredLabor.Add(JobRole.BlueCollarScience, 35);
                     break;
 
                 case "Corp-Sec Precinct":
                     b.ZoneType = BusinessZoneType.Commercial;
-                    b.Outputs.Add(Retail(GoodType.Security), 500f);
-                    b.InputGoods.Add(Wholesale(GoodType.Weapons), 100f);
-                    b.InputGoods.Add(Wholesale(GoodType.Automobiles), 20f);
-                    b.InputGoods.Add(Wholesale(GoodType.CorporateServices), 50f);
+                    b.Outputs.Add(Retail(GoodType.Security), 500f); // High coverage area
+                    b.InputGoods.Add(Wholesale(GoodType.Weapons), 50f);
+                    b.InputGoods.Add(Wholesale(GoodType.Automobiles), 10f);
+                    b.InputGoods.Add(Wholesale(GoodType.CorporateServices), 20f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 150f);
-                    b.RequiredLabor.Add(JobRole.BlueCollarMilitary, 40);
-                    b.RequiredLabor.Add(JobRole.WhiteCollarMilitary, 10);
+                    b.RequiredLabor.Add(JobRole.BlueCollarMilitary, 80);
+                    b.RequiredLabor.Add(JobRole.WhiteCollarMilitary, 20);
                     break;
             }
             return b;

@@ -16,8 +16,15 @@ namespace CyberpunkGenerator.Models
         public BusinessZoneType ZoneType { get; set; }
         public PopSocioeconomicClass? TargetClass { get; set; }
 
+        /// <summary>
+        /// True for businesses that occupy an entire block exclusively:
+        ///   - All Industrial buildings (factories, plants, mines)
+        ///   - Large Commercial offices (Corp HQs, research facilities)
+        /// False for retail/service businesses that share a MixedUse block.
+        /// </summary>
+        public bool IsWholeBlock { get; set; }
+
         // --- IZoneable Implementation ---
-        // Industrial businesses don't have a class, Commercial businesses might.
         public PlacementType PlacementType => ZoneType == BusinessZoneType.Commercial
             ? PlacementType.Commercial
             : PlacementType.Industrial;

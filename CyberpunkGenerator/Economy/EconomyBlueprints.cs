@@ -27,7 +27,9 @@ namespace CyberpunkGenerator.Economy
                     { Retail(GoodType.LuxuryFood), 200f },
                     { Retail(GoodType.LuxuryClothes), 30f },
                     { Retail(GoodType.LuxuryFurniture), 2f },
-                    { Retail(GoodType.SimRealSets), 10f },
+                    { Retail(GoodType.PersonalTerminals), 2f },
+                    { Retail(GoodType.HoloScreens), 1f },
+                    { Retail(GoodType.SimRealSets), 1f },
                     { Retail(GoodType.Automobiles), 5f },
                     { Retail(GoodType.MedicalCare), 2f },
                     { Retail(GoodType.Security), 5f },
@@ -44,7 +46,9 @@ namespace CyberpunkGenerator.Economy
                     { Retail(GoodType.LuxuryClothes), 5f },
                     { Retail(GoodType.Furniture), 0.5f },
                     { Retail(GoodType.LuxuryFurniture), 0.5f },
-                    { Retail(GoodType.HoloScreens), 10f },
+                    { Retail(GoodType.PersonalTerminals), 1f },
+                    { Retail(GoodType.HoloScreens), 0.5f },
+                    { Retail(GoodType.SimRealSets), 0.2f },
                     { Retail(GoodType.MedicalCare), 1f },
                     { Retail(GoodType.Security), 2f },
                     { Retail(GoodType.Automobiles), 2f },
@@ -58,7 +62,7 @@ namespace CyberpunkGenerator.Economy
                     { Retail(GoodType.Liquor), 100f },
                     { Retail(GoodType.Clothes), 10f },
                     { Retail(GoodType.Furniture), 0.5f },
-                    { Retail(GoodType.PersonalTerminals), 5f },
+                    { Retail(GoodType.PersonalTerminals), 0.5f },
                     { Retail(GoodType.MedicalCare), 0.5f },
                     { Retail(GoodType.Security), 0.5f },
                     { Retail(GoodType.BasicCybernetics), 2f }
@@ -125,6 +129,7 @@ namespace CyberpunkGenerator.Economy
                 // ==========================================
                 case "Mega-Corp Headquarters":
                     b.ZoneType = BusinessZoneType.Commercial;
+                    b.IsWholeBlock = true;
                     b.TargetClass = PopSocioeconomicClass.Capitalist;
                     b.Outputs.Add(Wholesale(GoodType.CorporateServices), 2000f);
                     b.InputGoods.Add(Wholesale(GoodType.LuxuryFurniture), 50f);
@@ -133,10 +138,13 @@ namespace CyberpunkGenerator.Economy
                     b.RequiredLabor.Add(JobRole.CapCommercial, 150);
                     b.RequiredLabor.Add(JobRole.CapScience, 50);
                     b.RequiredLabor.Add(JobRole.WhiteCollarCommercial, 500);
+                    b.RequiredLabor.Add(JobRole.WhiteCollarMilitary, 20);
+                    b.RequiredLabor.Add(JobRole.BlueCollarMilitary, 80);
                     break;
 
-                case "Orbital Research Facility":
+                case "Research Facility":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.Data), 5000f);
                     b.InputGoods.Add(Wholesale(GoodType.PersonalTerminals), 200f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 1500f);
@@ -145,8 +153,9 @@ namespace CyberpunkGenerator.Economy
                     b.RequiredLabor.Add(JobRole.BlueCollarScience, 100);
                     break;
 
-                case "Medical Tech Plant":
+                case "Pharma Factory":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.MedicalEquipment), 5000f);
                     b.InputGoods.Add(Wholesale(GoodType.ManufacturedGoods), 2000f);
                     b.InputGoods.Add(Wholesale(GoodType.SyntheticMaterials), 1000f);
@@ -160,6 +169,7 @@ namespace CyberpunkGenerator.Economy
                 // ==========================================
                 case "Automated Food Factory":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.BasicFood), 200000f);
                     b.InputGoods.Add(Wholesale(GoodType.RawMaterials), 10000f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 5000f);
@@ -169,6 +179,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Synthetic Meat Vat":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.LuxuryFood), 10000f);
                     b.InputGoods.Add(Wholesale(GoodType.SyntheticMaterials), 2000f);
                     b.InputGoods.Add(Wholesale(GoodType.Data), 100f);
@@ -199,6 +210,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Synthetic Distillery":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.Liquor), 50000f);
                     b.InputGoods.Add(Wholesale(GoodType.SyntheticMaterials), 10000f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 5000f);
@@ -219,6 +231,7 @@ namespace CyberpunkGenerator.Economy
                 // ==========================================
                 case "Textile Mill":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.Clothes), 100000f);
                     b.InputGoods.Add(Wholesale(GoodType.SyntheticMaterials), 2000f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 5000f);
@@ -227,6 +240,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Designer Studio":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.LuxuryClothes), 5000f);
                     b.InputGoods.Add(Wholesale(GoodType.NaturalFabric), 1000f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 1000f);
@@ -235,6 +249,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Furniture Factory":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.Furniture), 10000f);
                     b.InputGoods.Add(Wholesale(GoodType.SyntheticMaterials), 5000f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 4000f);
@@ -243,6 +258,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Artisan Woodworker":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.LuxuryFurniture), 500f);
                     b.InputGoods.Add(Wholesale(GoodType.Wood), 500f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 500f);
@@ -294,6 +310,7 @@ namespace CyberpunkGenerator.Economy
                 // ==========================================
                 case "Fusion Power Plant":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.Electricity), 20000f);
                     b.Outputs.Add(Retail(GoodType.Electricity), 2000f);
                     b.InputGoods.Add(Wholesale(GoodType.RawMaterials), 4000f);
@@ -303,6 +320,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Automated Mine":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.RawMaterials), 10000f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 1000f);
                     b.RequiredLabor.Add(JobRole.BlueCollarIndustrial, 400);
@@ -311,6 +329,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Petro-Chem Plant":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.SyntheticMaterials), 5000f);
                     b.InputGoods.Add(Wholesale(GoodType.RawMaterials), 2500f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 1500f);
@@ -320,6 +339,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Bio-Cotton Farm":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.NaturalFabric), 2500f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 1000f);
                     b.RequiredLabor.Add(JobRole.BlueCollarIndustrial, 200);
@@ -327,6 +347,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Hydroponic Wood Farm":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.Wood), 1500f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 2000f);
                     b.RequiredLabor.Add(JobRole.BlueCollarIndustrial, 150);
@@ -338,6 +359,7 @@ namespace CyberpunkGenerator.Economy
                 // ==========================================
                 case "Automated Factory":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.ManufacturedGoods), 10000f);
                     b.InputGoods.Add(Wholesale(GoodType.RawMaterials), 4000f);
                     b.InputGoods.Add(Wholesale(GoodType.CorporateServices), 200f);
@@ -347,6 +369,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Auto Plant":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.Automobiles), 500f);
                     b.InputGoods.Add(Wholesale(GoodType.ManufacturedGoods), 1000f);
                     b.InputGoods.Add(Wholesale(GoodType.SyntheticMaterials), 500f);
@@ -366,6 +389,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Munitions Plant":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.Weapons), 5000f);
                     b.InputGoods.Add(Wholesale(GoodType.ManufacturedGoods), 2000f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 2000f);
@@ -377,6 +401,7 @@ namespace CyberpunkGenerator.Economy
                 // ==========================================
                 case "Terminal Factory":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.PersonalTerminals), 5000f);
                     b.InputGoods.Add(Wholesale(GoodType.SyntheticMaterials), 1500f);
                     b.InputGoods.Add(Wholesale(GoodType.Electricity), 2000f);
@@ -385,6 +410,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "Holo-Screen Plant":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.HoloScreens), 2000f);
                     b.InputGoods.Add(Wholesale(GoodType.ManufacturedGoods), 1000f);
                     b.InputGoods.Add(Wholesale(GoodType.SyntheticMaterials), 1000f);
@@ -395,6 +421,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "SimReal Studio":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.SimRealSets), 1000f);
                     b.InputGoods.Add(Wholesale(GoodType.ManufacturedGoods), 500f);
                     b.InputGoods.Add(Wholesale(GoodType.Data), 1000f);
@@ -427,6 +454,7 @@ namespace CyberpunkGenerator.Economy
                 // ==========================================
                 case "Street-Chrome Foundry":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.BasicCybernetics), 5000f);
                     b.InputGoods.Add(Wholesale(GoodType.SyntheticMaterials), 2000f);
                     b.InputGoods.Add(Wholesale(GoodType.RawMaterials), 1000f);
@@ -437,6 +465,7 @@ namespace CyberpunkGenerator.Economy
 
                 case "High-Tech Cyber Lab":
                     b.ZoneType = BusinessZoneType.Industrial;
+                    b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.LuxuryCybernetics), 1000f);
                     b.InputGoods.Add(Wholesale(GoodType.Data), 1000f);
                     b.InputGoods.Add(Wholesale(GoodType.SyntheticMaterials), 1500f);
@@ -510,7 +539,7 @@ namespace CyberpunkGenerator.Economy
             return need switch
             {
                 // Tech, Corporate & Science Overhead
-                { Type: GoodType.Data, State: GoodState.Wholesale } => "Orbital Research Facility",
+                { Type: GoodType.Data, State: GoodState.Wholesale } => "Research Facility",
                 { Type: GoodType.CorporateServices, State: GoodState.Wholesale } => "Mega-Corp Headquarters",
                 { Type: GoodType.MedicalEquipment, State: GoodState.Wholesale } => "Medical Tech Plant",
 
@@ -535,6 +564,7 @@ namespace CyberpunkGenerator.Economy
                 { Type: GoodType.Wood } => "Hydroponic Wood Farm",
                 { Type: GoodType.ManufacturedGoods } => "Automated Factory",
                 { Type: GoodType.Weapons } => "Munitions Plant",
+                { Type: GoodType.MedicalEquipment } => "Pharma Factory",
 
                 // Wholesale
                 { Type: GoodType.BasicFood, State: GoodState.Wholesale } => "Automated Food Factory",
@@ -563,10 +593,10 @@ namespace CyberpunkGenerator.Economy
                 { Type: GoodType.SimRealSets, State: GoodState.Retail } => "SimReal Parlor",
 
                 // Services
-                { Type: GoodType.MedicalCare } => "Corporate Hospital",
+                { Type: GoodType.MedicalCare } => "Pharmasutical Factory",
                 { Type: GoodType.Security } => "Corp-Sec Precinct",
 
-                _ => "Automated Food Factory"
+                _ => "Unknown Business"
             };
         }
     }

@@ -1,4 +1,4 @@
-﻿using CyberpunkGenerator.Data;
+using CyberpunkGenerator.Data;
 using CyberpunkGenerator.Economy;
 using CyberpunkGenerator.Models;
 
@@ -9,11 +9,17 @@ namespace CyberpunkGenerator.Generators
         private List<Pop> _allPops = new();
         private List<Business> _allBusinesses = new();
 
-        public void GenerateOrganicCity()
+        /// <summary>
+        /// Runs the organic economic expansion loop and returns the full
+        /// population and business lists for the ZoningEngine to consume.
+        /// </summary>
+        public (List<Pop> Pops, List<Business> Businesses) GenerateOrganicCity()
         {
-            // 1. SEED THE CITY with a Megacorp Core (Capitalist + Commercial/Science)
-            AddPops(PopSocioeconomicClass.Capitalist, PopField.Commercial, 250);
-            AddPops(PopSocioeconomicClass.Capitalist, PopField.Science, 250); // High-end R&D execs
+            // Seed with a Mega-Corp Headquarters. Adding it to _allBusinesses before
+            // the expansion loop means its RequiredLabor (Capitalists, WhiteCollar)
+            // drives the first immigration wave organically. ZoningEngine will pull
+            // this exact instance out of the returned list and place it at (0,0).
+            _allBusinesses.Add(EconomyBlueprints.CreateBusiness("Mega-Corp Headquarters"));
 
             bool needsMet = false;
             int loopSafeguard = 0;
@@ -35,30 +41,30 @@ namespace CyberpunkGenerator.Generators
                         var newBusiness = EconomyBlueprints.CreateBusiness(businessType);
                         _allBusinesses.Add(newBusiness);
 
-                        Console.WriteLine($"[Built] {newBusiness.BusinessType} to fulfill {deficit.Key}");
+                        Console.WriteLine($"  [Built] {newBusiness.BusinessType} to fulfill {deficit.Key}");
                     }
                 }
 
-                // B. Labor Deficits (Using the new JobRole record)
+                // B. Labor Deficits
                 var laborDeficits = CalculateLaborDeficits();
                 foreach (var laborNeed in laborDeficits)
                 {
                     if (laborNeed.Value > 0)
                     {
                         needsMet = false;
-
-                        // laborNeed.Key is our JobRole (e.g., WhiteCollar Commercial)
-                        // laborNeed.Value is the number of people needed
                         AddPops(laborNeed.Key.Class, laborNeed.Key.Field, laborNeed.Value);
 
-                        Console.WriteLine($"[Immigration] {laborNeed.Value} {laborNeed.Key.Class} {laborNeed.Key.Field} workers arrived.");
+                        Console.WriteLine($"  [Immigration] {laborNeed.Value} " +
+                                          $"{laborNeed.Key.Class} {laborNeed.Key.Field} workers arrived.");
                     }
                 }
             }
 
-            Console.WriteLine($"\nCity generation stabilized after {loopSafeguard} passes.");
+            Console.WriteLine($"\nEconomy stabilized after {loopSafeguard} passes.");
             Console.WriteLine($"Total Population: {_allPops.Sum(p => p.Size)}");
             Console.WriteLine($"Total Businesses: {_allBusinesses.Count}");
+
+            return (_allPops, _allBusinesses);
         }
 
         private void AddPops(PopSocioeconomicClass popClass, PopField field, int size)
@@ -105,18 +111,17 @@ namespace CyberpunkGenerator.Generators
 
             var deficits = new Dictionary<MarketGood, float>();
 
-            // Iterate through all possible combinations of Goods and States
             foreach (GoodType goodType in Enum.GetValues(typeof(GoodType)))
             {
                 foreach (GoodState state in Enum.GetValues(typeof(GoodState)))
                 {
                     var marketGood = new MarketGood(goodType, state);
-
-                    float d = demand.ContainsKey(marketGood) ? demand[marketGood] : 0;
-                    float s = supply.ContainsKey(marketGood) ? supply[marketGood] : 0;
+                    float d = demand.GetValueOrDefault(marketGood);
+                    float s = supply.GetValueOrDefault(marketGood);
                     if (d > s) deficits[marketGood] = d - s;
                 }
             }
+
             return deficits;
         }
 
@@ -136,20 +141,17 @@ namespace CyberpunkGenerator.Generators
 
             foreach (var pop in _allPops)
             {
-                // We create a JobRole on the fly to check against the demand
                 var popRole = new JobRole(pop.SocioeconomicClass, pop.Field);
-
                 if (!supply.ContainsKey(popRole)) supply[popRole] = 0;
                 supply[popRole] += pop.Size;
             }
 
             var deficits = new Dictionary<JobRole, int>();
 
-            // Iterate over the keys in demand to find what's missing
             foreach (var role in demand.Keys)
             {
                 int d = demand[role];
-                int s = supply.ContainsKey(role) ? supply[role] : 0;
+                int s = supply.GetValueOrDefault(role);
                 if (d > s) deficits[role] = d - s;
             }
 

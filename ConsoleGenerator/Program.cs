@@ -7,8 +7,9 @@ public class Program
     {
         // 1. Initialize the generators
         var citySim = new CitySimulator();
+        var cityGuts = citySim.GenerateOrganicCity();
 
-        citySim.GenerateOrganicCity();
+        var zoningEngine = new ZoningEngine(cityGuts.Pops, cityGuts.Businesses);
     }
 
     public static void PrintCityDetails(City city)

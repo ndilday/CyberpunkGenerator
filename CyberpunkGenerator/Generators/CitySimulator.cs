@@ -72,14 +72,13 @@ namespace CyberpunkGenerator.Generators
             });
         }
 
-        private Dictionary<GoodType, float> CalculateGoodsDeficits()
+        private Dictionary<MarketGood, float> CalculateGoodsDeficits()
         {
-            var demand = new Dictionary<GoodType, float>();
-            var supply = new Dictionary<GoodType, float>();
+            var demand = new Dictionary<MarketGood, float>();
+            var supply = new Dictionary<MarketGood, float>();
 
             foreach (var pop in _allPops)
             {
-                // Look up needs based on SocioeconomicClass
                 if (EconomyBlueprints.PopNeeds.TryGetValue(pop.SocioeconomicClass, out var needs))
                 {
                     foreach (var need in needs)
@@ -104,12 +103,19 @@ namespace CyberpunkGenerator.Generators
                 }
             }
 
-            var deficits = new Dictionary<GoodType, float>();
-            foreach (GoodType good in Enum.GetValues(typeof(GoodType)))
+            var deficits = new Dictionary<MarketGood, float>();
+
+            // Iterate through all possible combinations of Goods and States
+            foreach (GoodType goodType in Enum.GetValues(typeof(GoodType)))
             {
-                float d = demand.ContainsKey(good) ? demand[good] : 0;
-                float s = supply.ContainsKey(good) ? supply[good] : 0;
-                if (d > s) deficits[good] = d - s;
+                foreach (GoodState state in Enum.GetValues(typeof(GoodState)))
+                {
+                    var marketGood = new MarketGood(goodType, state);
+
+                    float d = demand.ContainsKey(marketGood) ? demand[marketGood] : 0;
+                    float s = supply.ContainsKey(marketGood) ? supply[marketGood] : 0;
+                    if (d > s) deficits[marketGood] = d - s;
+                }
             }
             return deficits;
         }

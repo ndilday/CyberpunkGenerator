@@ -3,12 +3,15 @@
     public enum PopField { Commercial, Industrial, Military, Science }
     public enum PopSocioeconomicClass { Capitalist, WhiteCollar, BlueCollar, Destitute }
 
-    // Cleaned up: No more "Bulk" prefixes
     public enum GoodType
     {
+        // Tech & Data
         SimRealSets,
         HoloScreens,
         PersonalTerminals,
+        Data,               // NEW: Intermediate Good
+
+        // Life/Home
         BasicFood,
         LuxuryFood,
         Liquor,
@@ -18,25 +21,37 @@
         Furniture,
         LuxuryFurniture,
         Automobiles,
+
+        // Housing Tiers
+        SlumHousing,
+        BasicHousing,
+        ComfortableHousing,
+        LuxuryHousing,
+
+        // Augmentations & Biotech
+        BasicCybernetics,   // NEW
+        LuxuryCybernetics,  // NEW
+        GeneticTailoring,   // NEW
+
+        // Services
         MedicalCare,
         Security,
         Logistics,
+        CorporateServices,  // NEW: Intermediate Good
+
+        // Industrial / Intermediate
         Electricity,
         SyntheticMaterials,
         NaturalFabric,
         Wood,
         ManufacturedGoods,
         RawMaterials,
-        Weapons
+        Weapons,
+        MedicalEquipment    // NEW: Intermediate Good
     }
 
-    public enum GoodState
-    {
-        Wholesale, // Fresh from the factory, used by businesses
-        Retail     // Sold in a storefront, demanded by pops
-    }
+    public enum GoodState { Wholesale, Retail }
 
-    // The new composite key for our economy
     public record MarketGood(GoodType Type, GoodState State)
     {
         public override string ToString() => $"{State} {Type}";

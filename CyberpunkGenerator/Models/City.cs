@@ -15,6 +15,7 @@ namespace CyberpunkGenerator.Models
 
         public City()
         {
+            Name = "";
             Neighborhoods = new List<Neighborhood>();
             Gangs = new List<Gang>();
         }

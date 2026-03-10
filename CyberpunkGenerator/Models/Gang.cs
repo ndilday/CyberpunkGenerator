@@ -15,6 +15,8 @@ namespace CyberpunkGenerator.Models
 
         public Gang()
         {
+            Name = "";
+            Specialty = "";
             ControlledTerritory = new List<Neighborhood>();
         }
 

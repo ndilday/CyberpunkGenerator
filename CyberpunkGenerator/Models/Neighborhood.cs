@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -16,6 +17,7 @@ namespace CyberpunkGenerator.Models
 
         public Neighborhood()
         {
+            Name = "";
             Blocks = new List<CityBlock>();
             Pops = new List<Pop>();
         }

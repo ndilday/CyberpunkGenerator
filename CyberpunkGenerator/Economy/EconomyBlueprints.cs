@@ -312,7 +312,6 @@ namespace CyberpunkGenerator.Economy
                     b.ZoneType = BusinessZoneType.Industrial;
                     b.IsWholeBlock = true;
                     b.Outputs.Add(Wholesale(GoodType.Electricity), 20000f);
-                    b.Outputs.Add(Retail(GoodType.Electricity), 2000f);
                     b.InputGoods.Add(Wholesale(GoodType.RawMaterials), 4000f);
                     b.RequiredLabor.Add(JobRole.BlueCollarIndustrial, 100);
                     b.RequiredLabor.Add(JobRole.WhiteCollarIndustrial, 20);
@@ -541,7 +540,7 @@ namespace CyberpunkGenerator.Economy
                 // Tech, Corporate & Science Overhead
                 { Type: GoodType.Data, State: GoodState.Wholesale } => "Research Facility",
                 { Type: GoodType.CorporateServices, State: GoodState.Wholesale } => "Mega-Corp Headquarters",
-                { Type: GoodType.MedicalEquipment, State: GoodState.Wholesale } => "Medical Tech Plant",
+                { Type: GoodType.MedicalEquipment, State: GoodState.Wholesale } => "Pharma Factory",
 
                 // Biotech & Augmentations
                 { Type: GoodType.BasicCybernetics, State: GoodState.Wholesale } => "Street-Chrome Foundry",
@@ -593,7 +592,7 @@ namespace CyberpunkGenerator.Economy
                 { Type: GoodType.SimRealSets, State: GoodState.Retail } => "SimReal Parlor",
 
                 // Services
-                { Type: GoodType.MedicalCare } => "Pharmasutical Factory",
+                { Type: GoodType.MedicalCare } => "Corp-Med Clinic",
                 { Type: GoodType.Security } => "Corp-Sec Precinct",
 
                 _ => "Unknown Business"

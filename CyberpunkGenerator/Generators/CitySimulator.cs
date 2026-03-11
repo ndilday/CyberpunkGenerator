@@ -37,11 +37,15 @@ namespace CyberpunkGenerator.Generators
                     if (deficit.Value > 0)
                     {
                         needsMet = false;
-                        string businessType = EconomyBlueprints.GetBusinessToFulfillNeed(deficit.Key);
-                        var newBusiness = EconomyBlueprints.CreateBusiness(businessType);
-                        _allBusinesses.Add(newBusiness);
-
-                        Console.WriteLine($"  [Built] {newBusiness.BusinessType} to fulfill {deficit.Key}");
+                        float remainingDeficit = deficit.Value;
+                        while (remainingDeficit > 0)
+                        {
+                            string businessType = EconomyBlueprints.GetBusinessToFulfillNeed(deficit.Key);
+                            var newBusiness = EconomyBlueprints.CreateBusiness(businessType);
+                            _allBusinesses.Add(newBusiness);
+                            Console.WriteLine($"  [Built] {newBusiness.BusinessType} to fulfill {deficit.Key}");
+                            remainingDeficit -= newBusiness.Outputs.GetValueOrDefault(deficit.Key, 0);
+                        }
                     }
                 }
 
@@ -118,7 +122,10 @@ namespace CyberpunkGenerator.Generators
                     var marketGood = new MarketGood(goodType, state);
                     float d = demand.GetValueOrDefault(marketGood);
                     float s = supply.GetValueOrDefault(marketGood);
-                    if (d > s) deficits[marketGood] = d - s;
+                    if (d > s)
+                    {
+                        deficits[marketGood] = d - s;
+                    }
                 }
             }
 

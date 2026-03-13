@@ -19,7 +19,7 @@ namespace CyberpunkGenerator.Generators
             // the expansion loop means its RequiredLabor (Capitalists, WhiteCollar)
             // drives the first immigration wave organically. ZoningEngine will pull
             // this exact instance out of the returned list and place it at (0,0).
-            _allBusinesses.Add(EconomyBlueprints.CreateBusiness("Mega-Corp Headquarters"));
+            _allBusinesses.Add(EconomyBlueprints.CreateBusiness(BusinessTypes.MegaCorpHeadquarters));
 
             bool needsMet = false;
             int loopSafeguard = 0;

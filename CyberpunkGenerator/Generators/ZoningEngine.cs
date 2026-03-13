@@ -53,7 +53,7 @@ namespace CyberpunkGenerator.Generators
             // the queue in the main loop.
             var seedHQ = _pendingEntities
                 .OfType<Business>()
-                .FirstOrDefault(b => b.BusinessType == "Mega-Corp Headquarters")
+                .FirstOrDefault(b => b.BusinessType == BusinessTypes.MegaCorpHeadquarters)
                 ?? throw new InvalidOperationException(
                     "No Mega-Corp Headquarters found in pending entities. " +
                     "CitySimulator must generate one before ZoningEngine runs.");

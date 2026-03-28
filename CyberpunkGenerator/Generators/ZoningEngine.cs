@@ -27,8 +27,6 @@ namespace CyberpunkGenerator.Generators
 
         private static readonly Random _rng = new();
 
-        private int _nextBlockId = 0; // tracks for logging
-
         public ZoningEngine(List<Pop> allPops, List<Business> allBusinesses)
         {
             _map = new CityMap();

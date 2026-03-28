@@ -1,8 +1,5 @@
 ﻿using CyberpunkGenerator.Data;
 using CyberpunkGenerator.Economy;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace CyberpunkGenerator.Models
 {

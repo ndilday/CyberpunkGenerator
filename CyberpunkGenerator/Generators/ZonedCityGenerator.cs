@@ -1,5 +1,4 @@
 using CyberpunkGenerator.Data;
-using CyberpunkGenerator.Economy;
 using CyberpunkGenerator.Models;
 
 namespace CyberpunkGenerator.Generators
@@ -31,7 +30,7 @@ namespace CyberpunkGenerator.Generators
 
             // ── Phase D: Assign gangs ────────────────────────────────────────
             Console.WriteLine("\n=== Phase D: Gang Assignment ===");
-            var gangs = AssignGangs(neighborhoods);
+            var gangs = AssignGangs(neighborhoods, cityMap);
 
             // ── Assemble City ────────────────────────────────────────────────
             var city = new City
@@ -182,28 +181,52 @@ namespace CyberpunkGenerator.Generators
         // Power is proportional to neighborhood population density.
         // Gangs claim contiguous low-affluence territory.
         // ─────────────────────────────────────────────────────────────────────
-        private static List<Gang> AssignGangs(List<Neighborhood> neighborhoods)
+        private static List<Gang> AssignGangs(List<Neighborhood> neighborhoods, CityMap cityMap)
         {
-            var gangs = new List<Gang>();
-
-            var grittyCandidates = neighborhoods
+            // ── 1. Identify eligible neighborhoods ───────────────────────────────
+            var eligible = neighborhoods
                 .Where(n => n.Grit >= 5)
-                .OrderByDescending(n => n.Grit)
                 .ToList();
 
-            // Roughly one gang per 2-3 gritty neighborhoods, minimum 1
-            int gangCount = Math.Max(1, grittyCandidates.Count / 2);
-
-            for (int i = 0; i < gangCount && i < grittyCandidates.Count; i++)
+            if (eligible.Count == 0)
             {
-                var homeHood = grittyCandidates[i];
+                Console.WriteLine("  No gritty neighborhoods found; no gangs spawned.");
+                return new List<Gang>();
+            }
 
-                int totalPop = homeHood.Blocks
-                    .SelectMany(b => b.Pops)
-                    .Sum(p => p.Size);
+            // ── 2. Build a spatial adjacency map: neighborhood → neighbor hoods ──
+            // Two neighborhoods are adjacent when they share at least one grid edge
+            // (i.e., a block in A is at distance 1 from a block in B on the CityMap).
+            var neighborhoodAdjacency = BuildNeighborhoodAdjacency(neighborhoods, cityMap);
 
-                // Power 1-10 scaled against an assumed max pop of 50,000
-                int power = Math.Clamp(totalPop / 5000 + 1, 1, 10);
+            // ── 3. Score and pick HQs ────────────────────────────────────────────
+            int gangCount = Math.Max(1, eligible.Count / 2);
+
+            // Score: Grit is weighted heavily; population density is a tiebreaker.
+            int Score(Neighborhood n)
+            {
+                int pop = n.Blocks.SelectMany(b => b.Pops).Sum(p => p.Size);
+                return n.Grit * 3 + pop / 1_000;
+            }
+
+            var claimed = new HashSet<string>();   // neighborhood names already assigned
+            var gangList = new List<Gang>();
+            var gangTerritoryMap = new Dictionary<Gang, HashSet<string>>();
+
+            var candidatesByScore = eligible
+                .OrderByDescending(Score)
+                .ToList();
+
+            for (int i = 0; i < gangCount; i++)
+            {
+                // Pick the highest-scoring unclaimed neighborhood as HQ.
+                var hq = candidatesByScore.FirstOrDefault(n => !claimed.Contains(n.Name));
+                if (hq == null) break;
+
+                claimed.Add(hq.Name);
+
+                int pop = hq.Blocks.SelectMany(b => b.Pops).Sum(p => p.Size);
+                int power = Math.Clamp(pop / 5_000 + hq.Grit / 2, 1, 10);
 
                 string adj = NameBanks.GangAdjectives.GetRandom();
                 string noun = NameBanks.GangNouns.GetRandom();
@@ -214,25 +237,163 @@ namespace CyberpunkGenerator.Generators
                     Name = $"The {adj} {noun}",
                     Specialty = specialty,
                     Power = power,
-                    ControlledTerritory = new List<Neighborhood> { homeHood }
+                    ControlledTerritory = new List<Neighborhood> { hq }
                 };
 
-                // Expand gang into adjacent gritty neighborhoods not already claimed
-                var claimed = new HashSet<string> { homeHood.Name };
-                foreach (var neighbor in grittyCandidates.Skip(i + 1).Take(2))
-                {
-                    if (!claimed.Contains(neighbor.Name) && neighbor.Grit >= 5)
-                    {
-                        gang.ControlledTerritory.Add(neighbor);
-                        claimed.Add(neighbor.Name);
-                    }
-                }
+                gangList.Add(gang);
+                gangTerritoryMap[gang] = new HashSet<string> { hq.Name };
 
-                gangs.Add(gang);
-                Console.WriteLine($"  Gang spawned: {gang}");
+                Console.WriteLine($"  Gang spawned: {gang} — HQ: {hq.Name}");
             }
 
-            return gangs;
+            // ── 4. Territorial expansion ─────────────────────────────────────────
+            // Gangs take turns (strongest first) claiming one adjacent unclaimed
+            // gritty neighborhood per turn.  Stops when no expansion is possible.
+            bool expanded = true;
+            int expansionRound = 0;
+            int maxRounds = neighborhoods.Count; // hard safety cap
+
+            while (expanded && expansionRound < maxRounds)
+            {
+                expanded = false;
+                expansionRound++;
+
+                foreach (var gang in gangList.OrderByDescending(g => g.Power))
+                {
+                    var ownedNames = gangTerritoryMap[gang];
+
+                    // Collect all gritty unclaimed neighborhoods spatially adjacent
+                    // to any neighborhood this gang already owns.
+                    Neighborhood? best = null;
+                    int bestScore = -1;
+
+                    foreach (var ownedName in ownedNames)
+                    {
+                        var owned = neighborhoods.First(n => n.Name == ownedName);
+
+                        if (!neighborhoodAdjacency.TryGetValue(ownedName, out var adjacentHoods))
+                            continue;
+
+                        foreach (var candidate in adjacentHoods)
+                        {
+                            if (claimed.Contains(candidate.Name)) continue;
+                            if (candidate.Grit < 5) continue; // gangs don't bother with affluent zones
+
+                            int s = Score(candidate);
+                            if (s > bestScore)
+                            {
+                                bestScore = s;
+                                best = candidate;
+                            }
+                        }
+                    }
+
+                    if (best != null)
+                    {
+                        claimed.Add(best.Name);
+                        gang.ControlledTerritory.Add(best);
+                        ownedNames.Add(best.Name);
+                        expanded = true;
+
+                        Console.WriteLine($"  [Expand] {gang.Name} claims {best.Name}");
+                    }
+                }
+            }
+
+            // ── 5. Rivalry detection ─────────────────────────────────────────────
+            // Two gangs are rivals when they own adjacent neighborhoods and at least
+            // one of those border neighborhoods has Grit >= 7 (a hot zone).
+            // The Gang model doesn't have a Rivals list yet, so we just log it.
+            Console.WriteLine("\n  Rivalry check:");
+            bool anyRivalry = false;
+
+            for (int a = 0; a < gangList.Count; a++)
+            {
+                for (int b = a + 1; b < gangList.Count; b++)
+                {
+                    var gangA = gangList[a];
+                    var gangB = gangList[b];
+
+                    bool areRivals = gangA.ControlledTerritory.Any(na =>
+                    {
+                        if (!neighborhoodAdjacency.TryGetValue(na.Name, out var adj)) return false;
+                        return adj.Any(nb => gangB.ControlledTerritory.Any(t => t.Name == nb.Name));
+                    });
+
+                    if (areRivals)
+                    {
+                        // Check if any shared border is a hot zone (Grit >= 7)
+                        bool hotBorder = gangA.ControlledTerritory
+                            .Where(na => neighborhoodAdjacency.TryGetValue(na.Name, out var adj2)
+                                         && adj2.Any(nb => gangB.ControlledTerritory.Any(t => t.Name == nb.Name)))
+                            .Any(na => na.Grit >= 7)
+                            ||
+                            gangB.ControlledTerritory
+                            .Where(nb => neighborhoodAdjacency.TryGetValue(nb.Name, out var adj3)
+                                         && adj3.Any(na => gangA.ControlledTerritory.Any(t => t.Name == na.Name)))
+                            .Any(nb => nb.Grit >= 7);
+
+                        string intensity = hotBorder ? "HOT RIVALRY" : "Cold rivalry";
+                        Console.WriteLine($"    {intensity}: {gangA.Name} ↔ {gangB.Name}");
+                        anyRivalry = true;
+                    }
+                }
+            }
+
+            if (!anyRivalry)
+                Console.WriteLine("    No rival borders detected.");
+
+            return gangList;
+        }
+
+        // ── Adjacency helper ─────────────────────────────────────────────────────────
+        //
+        // Builds a dictionary mapping each neighborhood name to the set of
+        // neighborhoods that are spatially adjacent to it on the CityMap grid.
+        //
+        // Two neighborhoods are adjacent when at least one block from each is a
+        // cardinal neighbor (Manhattan distance == 1) of the other.
+
+        private static Dictionary<string, List<Neighborhood>> BuildNeighborhoodAdjacency(
+            List<Neighborhood> neighborhoods,
+            CityMap cityMap)
+        {
+            // Index every block coordinate to its neighborhood for fast lookup.
+            var coordToHood = new Dictionary<(int x, int y), Neighborhood>();
+            foreach (var hood in neighborhoods)
+                foreach (var block in hood.Blocks)
+                    coordToHood[(block.X, block.Y)] = hood;
+
+            var adjacency = new Dictionary<string, HashSet<string>>();
+            foreach (var hood in neighborhoods)
+                adjacency[hood.Name] = new HashSet<string>();
+
+            var cardinalOffsets = new (int dx, int dy)[] { (0, 1), (1, 0), (0, -1), (-1, 0) };
+
+            foreach (var hood in neighborhoods)
+            {
+                foreach (var block in hood.Blocks)
+                {
+                    foreach (var (dx, dy) in cardinalOffsets)
+                    {
+                        var neighborCoord = (block.X + dx, block.Y + dy);
+                        if (!coordToHood.TryGetValue(neighborCoord, out var neighborHood)) continue;
+                        if (neighborHood.Name == hood.Name) continue;
+
+                        adjacency[hood.Name].Add(neighborHood.Name);
+                        adjacency[neighborHood.Name].Add(hood.Name); // symmetric
+                    }
+                }
+            }
+
+            // Convert to List<Neighborhood> for the caller's convenience.
+            var result = new Dictionary<string, List<Neighborhood>>();
+            var hoodByName = neighborhoods.ToDictionary(n => n.Name);
+
+            foreach (var (name, neighborNames) in adjacency)
+                result[name] = neighborNames.Select(n => hoodByName[n]).ToList();
+
+            return result;
         }
     }
 }

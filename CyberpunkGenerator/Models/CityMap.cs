@@ -42,12 +42,6 @@ namespace CyberpunkGenerator.Models
             return GetDistance(a.X, a.Y, b.X, b.Y);
         }
 
-        // Useful for the Gravity calculation later: find all blocks of a specific socioeconomic level
-        public IEnumerable<CityBlock> GetBlocksOfClass(PopSocioeconomicClass targetClass)
-        {
-            return _grid.Values.Where(b => b.SocioeconomicLevel == targetClass);
-        }
-
         // Useful for finding a place to build next to an existing block
         public IEnumerable<(int x, int y)> GetAdjacentEmptyCoordinates(int x, int y)
         {

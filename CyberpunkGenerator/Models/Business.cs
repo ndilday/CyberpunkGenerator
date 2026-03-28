@@ -1,6 +1,4 @@
 ﻿using CyberpunkGenerator.Data;
-using System;
-using System.Collections.Generic;
 
 namespace CyberpunkGenerator.Models
 {

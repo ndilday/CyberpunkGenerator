@@ -108,10 +108,12 @@ namespace CyberpunkGenerator.Generators
             //    Also track the closest occupied block whose class is strictly
             //    lower, which is a displacement candidate.
 
-            CityBlock? bestDirectFit = null;       // existing block, no displacement needed
-            (int x, int y)? bestEmptyCoord = null; // empty coord for a brand-new block
-            CityBlock? bestDisplaceable = null;     // block we could gentrify into
-            int bestDistance = int.MaxValue;
+            CityBlock? bestMatchingFit = null;     // existing block, correct class already present
+            CityBlock? bestEmptyFit = null;        // existing block, no class lock yet (or new block)
+            (int x, int y)? bestEmptyCoord = null;
+            CityBlock? bestDisplaceable = null;
+            int bestMatchingDistance = int.MaxValue;
+            int bestEmptyDistance = int.MaxValue;
 
             // BFS expanding rings until we have found at least one candidate
             // and have exhausted the current distance shell.
@@ -133,40 +135,55 @@ namespace CyberpunkGenerator.Generators
 
                 if (existingBlock != null)
                 {
-                    // Can this block directly absorb the entity?
                     if (CanAccept(existingBlock, entity))
                     {
-                        if (dist < bestDistance || (dist == bestDistance && _rng.Next(2) == 0))
+                        bool hasMatchingClass = entity.TargetClass.HasValue
+                            && existingBlock.SocioeconomicLevel == entity.TargetClass;
+
+                        if (hasMatchingClass)
                         {
-                            bestDirectFit = existingBlock;
-                            bestEmptyCoord = null;
-                            bestDistance = dist;
-                            cutoffDistance = dist; // no need to look farther
+                            if (dist < bestMatchingDistance ||
+                                (dist == bestMatchingDistance && _rng.Next(2) == 0))
+                            {
+                                bestMatchingFit = existingBlock;
+                                bestMatchingDistance = dist;
+                                cutoffDistance = dist; // no need to search farther
+                            }
+                        }
+                        else if (bestMatchingFit == null)
+                        {
+                            if (dist < bestEmptyDistance ||
+                                (dist == bestEmptyDistance && _rng.Next(2) == 0))
+                            {
+                                bestEmptyFit = existingBlock;
+                                bestEmptyDistance = dist;
+                                // don't set cutoffDistance here — a matching block might
+                                // still appear at the same distance
+                            }
                         }
                     }
-                    // Is it a displacement candidate (lower class, same placement type)?
-                    else if (bestDirectFit == null && CanDisplace(existingBlock, entity))
+                    else if (bestMatchingFit == null && bestEmptyFit == null
+                             && CanDisplace(existingBlock, entity))
                     {
-                        if (dist < bestDistance || (dist == bestDistance && _rng.Next(2) == 0))
+                        if (dist < bestEmptyDistance ||
+                            (dist == bestEmptyDistance && _rng.Next(2) == 0))
                         {
                             bestDisplaceable = existingBlock;
-                            bestDistance = dist;
+                            bestEmptyDistance = dist;
                         }
                     }
                 }
-                else
+                else // empty coord
                 {
-                    // Empty coordinate — a new block could go here.
-                    // Only consider it if at least one occupied neighbor exists
-                    // (city must stay contiguous).
-                    if (HasPlacedNeighbor(cx, cy))
+                    if (HasPlacedNeighbor(cx, cy) && bestMatchingFit == null)
                     {
-                        if (bestDirectFit == null &&
-                            (dist < bestDistance || (dist == bestDistance && _rng.Next(2) == 0)))
+                        if (dist < bestEmptyDistance ||
+                            (dist == bestEmptyDistance && _rng.Next(2) == 0))
                         {
                             bestEmptyCoord = (cx, cy);
-                            bestDistance = dist;
-                            cutoffDistance = dist; // don't look farther for empties either
+                            bestEmptyFit = null; // coord wins over an unlocked existing block
+                            bestDisplaceable = null;
+                            bestEmptyDistance = dist;
                         }
                     }
                 }
@@ -174,7 +191,11 @@ namespace CyberpunkGenerator.Generators
                 // Expand neighbours if still within range.
                 foreach (var (nx, ny) in Cardinals(cx, cy))
                 {
-                    if (!visited.Contains((nx, ny)) && dist + 1 <= cutoffDistance + 1)
+                    int effectiveCutoff = bestMatchingFit != null
+                        ? bestMatchingDistance
+                        : bestEmptyDistance;
+
+                    if (!visited.Contains((nx, ny)) && dist < effectiveCutoff)
                     {
                         visited.Add((nx, ny));
                         queue.Enqueue((nx, ny, dist + 1));
@@ -183,14 +204,18 @@ namespace CyberpunkGenerator.Generators
             }
 
             // 3. Execute the best option found.
-            if (bestDirectFit != null)
+            if (bestMatchingFit != null)
             {
-                CommitToBlock(bestDirectFit, entity);
+                CommitToBlock(bestMatchingFit, entity);
             }
             else if (bestEmptyCoord.HasValue)
             {
                 var newBlock = CreateBlockForEntity(bestEmptyCoord.Value.x, bestEmptyCoord.Value.y, entity);
                 CommitToBlock(newBlock, entity);
+            }
+            else if (bestEmptyFit != null)
+            {
+                CommitToBlock(bestEmptyFit, entity);
             }
             else if (bestDisplaceable != null)
             {
@@ -198,7 +223,6 @@ namespace CyberpunkGenerator.Generators
             }
             else
             {
-                // Last resort: expand the map at the first available adjacent empty.
                 var fallback = FindAnyAdjacentEmpty();
                 var newBlock = CreateBlockForEntity(fallback.x, fallback.y, entity);
                 CommitToBlock(newBlock, entity);

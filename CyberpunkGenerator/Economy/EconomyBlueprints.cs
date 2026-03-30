@@ -79,7 +79,43 @@ namespace CyberpunkGenerator.Economy
         private static MarketGood Retail(GoodType type) => new MarketGood(type, GoodState.Retail);
         private static MarketGood Wholesale(GoodType type) => new MarketGood(type, GoodState.Wholesale);
 
-        // The central source of truth for physical space requirements
+        // ── Spatial / Density Constants ──────────────────────────────────────
+
+        /// <summary>
+        /// Usable residential sqm per floor, derived from a 200m x 100m block
+        /// at 50% efficiency: 20,000 sqm gross * 0.5 = 10,000 sqm usable.
+        /// </summary>
+        public const float FloorHeightSqm = 10_000f;
+
+        /// <summary>
+        /// Effective distance penalty added per projected floor when scoring a
+        /// residential block candidate. A block projected to be 10 floors tall
+        /// is treated as (10 * HeightPenaltyPerFloor) map units farther away.
+        /// Lower values produce denser, taller cities; higher values produce
+        /// lower-density sprawl.
+        /// </summary>
+        public const float HeightPenaltyPerFloor = 0.2f;
+
+        /// <summary>
+        /// How far (in Manhattan distance map units) a placed business's
+        /// amenity value radiates outward to influence the desirability map.
+        /// </summary>
+        public const int AmenityWriteRadius = 10;
+
+        /// <summary>
+        /// Weight of the amenity pull relative to the employer gravity pull
+        /// when computing a pop's gravity target. 0.4 means amenity pull
+        /// contributes 40% as strongly as employer proximity.
+        /// </summary>
+        public const float AmenityGravityWeight = 0.4f;
+
+        /// <summary>
+        /// Weight of the population density signal relative to the target-class
+        /// centroid when computing a commercial business's gravity target.
+        /// </summary>
+        public const float DensityGravityWeight = 0.4f;
+
+        // The central source of truth for physical space requirements.
         public static readonly Dictionary<PopSocioeconomicClass, int> SqmPerPerson = new()
         {
             { PopSocioeconomicClass.Capitalist, 200 },
@@ -87,6 +123,228 @@ namespace CyberpunkGenerator.Economy
             { PopSocioeconomicClass.BlueCollar, 50 },
             { PopSocioeconomicClass.Destitute, 25 }
         };
+
+        // ── Amenity Values ───────────────────────────────────────────────────
+        //
+        // Signed float per business type per socioeconomic class.
+        // Positive values attract pops of that class; negative values repel them.
+        // If a class key is absent, DefaultAmenityValue is used as fallback.
+        //
+        // Convention:
+        //   Industrial polluters:      -2.0 to -3.0 (class-neutral — nobody wants to live next to a plant)
+        //   Desirable retail/services: +1.0 to +2.0 (class-specific — a Dive Bar is +1.5 for BlueCollar, -0.5 for WhiteCollar)
+        //   Large corporate anchors:   mildly negative (prestige address, unpleasant neighbor)
+
+        /// <summary>
+        /// Fallback amenity value used when a business type has no entry, or
+        /// when a business type has an entry but not for the querying class.
+        /// </summary>
+        public const float DefaultAmenityValue = 0f;
+
+        /// <summary>
+        /// Per-business-type, per-class amenity values. Missing class keys fall
+        /// back to DefaultAmenityValue.
+        /// </summary>
+        public static readonly Dictionary<string, Dictionary<PopSocioeconomicClass, float>> AmenityValues = new()
+        {
+            // ── Heavy Industry (universally negative) ────────────────────────
+            [BusinessTypes.FusionPowerPlant] = AllClasses(-3.0f),
+            [BusinessTypes.AutomatedMine] = AllClasses(-2.5f),
+            [BusinessTypes.PetroChemPlant] = AllClasses(-2.5f),
+            [BusinessTypes.AutomatedFactory] = AllClasses(-2.0f),
+            [BusinessTypes.MunitionsPlant] = AllClasses(-3.0f),
+            [BusinessTypes.AutoPlant] = AllClasses(-2.0f),
+            [BusinessTypes.SyntheticDistillery] = AllClasses(-1.5f),
+            [BusinessTypes.TextileMill] = AllClasses(-1.5f),
+            [BusinessTypes.FurnitureFactory] = AllClasses(-1.5f),
+            [BusinessTypes.TerminalFactory] = AllClasses(-1.5f),
+            [BusinessTypes.HoloScreenPlant] = AllClasses(-1.5f),
+            [BusinessTypes.StreetChromeFoundry] = AllClasses(-2.0f),
+            [BusinessTypes.MedicalTechPlant] = AllClasses(-1.0f),
+            [BusinessTypes.BioCottonFarm] = AllClasses(-0.5f),
+            [BusinessTypes.HydroponicWoodFarm] = AllClasses(-0.5f),
+            [BusinessTypes.SimRealStudio] = AllClasses(-0.5f),
+            [BusinessTypes.HighTechCyberLab] = AllClasses(-1.0f),
+            [BusinessTypes.AutomatedFoodFactory] = AllClasses(-2.0f),
+            [BusinessTypes.SyntheticMeatVat] = AllClasses(-1.5f),
+            [BusinessTypes.DesignerStudio] = AllClasses(-0.5f),
+            [BusinessTypes.ArtisanWoodworker] = AllClasses(-0.5f),
+
+            // ── Corporate Anchors (prestigious but not pleasant neighbors) ───
+            [BusinessTypes.MegaCorpHeadquarters] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  1.0f },   // exec proximity is desirable
+                { PopSocioeconomicClass.WhiteCollar, 0.5f },   // near work
+                { PopSocioeconomicClass.BlueCollar, -1.0f },
+                { PopSocioeconomicClass.Destitute,  -1.5f },
+            },
+            [BusinessTypes.OrbitalResearchFacility] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  0.5f },
+                { PopSocioeconomicClass.WhiteCollar, 1.0f },   // scientists want to live near the lab
+                { PopSocioeconomicClass.BlueCollar, -0.5f },
+                { PopSocioeconomicClass.Destitute,  -1.0f },
+            },
+
+            // ── Food & Drink ─────────────────────────────────────────────────
+            [BusinessTypes.FoodMarket] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  0.0f },
+                { PopSocioeconomicClass.WhiteCollar, 0.5f },
+                { PopSocioeconomicClass.BlueCollar,  1.5f },
+                { PopSocioeconomicClass.Destitute,   2.0f },   // critical amenity for the poor
+            },
+            [BusinessTypes.GourmetMarket] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  1.5f },
+                { PopSocioeconomicClass.WhiteCollar, 2.0f },
+                { PopSocioeconomicClass.BlueCollar,  0.0f },
+                { PopSocioeconomicClass.Destitute,  -0.5f },   // visible wealth disparity
+            },
+            [BusinessTypes.DiveBar] = new()
+            {
+                { PopSocioeconomicClass.Capitalist, -1.0f },
+                { PopSocioeconomicClass.WhiteCollar,-0.5f },
+                { PopSocioeconomicClass.BlueCollar,  1.5f },
+                { PopSocioeconomicClass.Destitute,   1.0f },
+            },
+
+            // ── Clothing ─────────────────────────────────────────────────────
+            [BusinessTypes.ClothingStore] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  0.0f },
+                { PopSocioeconomicClass.WhiteCollar, 0.5f },
+                { PopSocioeconomicClass.BlueCollar,  1.0f },
+                { PopSocioeconomicClass.Destitute,   0.5f },
+            },
+            [BusinessTypes.ClothingBoutique] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  1.5f },
+                { PopSocioeconomicClass.WhiteCollar, 1.5f },
+                { PopSocioeconomicClass.BlueCollar, -0.5f },
+                { PopSocioeconomicClass.Destitute,  -1.0f },
+            },
+
+            // ── Furniture ────────────────────────────────────────────────────
+            [BusinessTypes.Furnishings] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  0.0f },
+                { PopSocioeconomicClass.WhiteCollar, 0.5f },
+                { PopSocioeconomicClass.BlueCollar,  1.0f },
+                { PopSocioeconomicClass.Destitute,   0.0f },
+            },
+            [BusinessTypes.InteriorDesign] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  1.5f },
+                { PopSocioeconomicClass.WhiteCollar, 1.0f },
+                { PopSocioeconomicClass.BlueCollar, -0.5f },
+                { PopSocioeconomicClass.Destitute,  -1.0f },
+            },
+
+            // ── Tech ─────────────────────────────────────────────────────────
+            [BusinessTypes.TechBazaar] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  0.0f },
+                { PopSocioeconomicClass.WhiteCollar, 1.0f },
+                { PopSocioeconomicClass.BlueCollar,  1.5f },
+                { PopSocioeconomicClass.Destitute,   0.5f },
+            },
+            [BusinessTypes.SimRealParlor] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  2.0f },
+                { PopSocioeconomicClass.WhiteCollar, 0.5f },
+                { PopSocioeconomicClass.BlueCollar, -0.5f },
+                { PopSocioeconomicClass.Destitute,  -1.0f },
+            },
+
+            // ── Augmentations & Biotech ──────────────────────────────────────
+            [BusinessTypes.RipperdocClinic] = new()
+            {
+                { PopSocioeconomicClass.Capitalist, -1.0f },   // seedy
+                { PopSocioeconomicClass.WhiteCollar,-0.5f },
+                { PopSocioeconomicClass.BlueCollar,  1.5f },   // necessary and accessible
+                { PopSocioeconomicClass.Destitute,   1.0f },
+            },
+            [BusinessTypes.ChromeBoutique] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  1.0f },
+                { PopSocioeconomicClass.WhiteCollar, 1.5f },
+                { PopSocioeconomicClass.BlueCollar,  0.0f },
+                { PopSocioeconomicClass.Destitute,  -0.5f },
+            },
+            [BusinessTypes.GeneTailoringClinic] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  2.0f },
+                { PopSocioeconomicClass.WhiteCollar, 0.5f },
+                { PopSocioeconomicClass.BlueCollar, -0.5f },
+                { PopSocioeconomicClass.Destitute,  -1.0f },
+            },
+
+            // ── Medical & Security ───────────────────────────────────────────
+            [BusinessTypes.CorpMedClinic] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  1.0f },
+                { PopSocioeconomicClass.WhiteCollar, 2.0f },
+                { PopSocioeconomicClass.BlueCollar,  0.0f },   // can't afford it, not relevant
+                { PopSocioeconomicClass.Destitute,  -0.5f },   // reminder of inaccessibility
+            },
+            [BusinessTypes.CorpSecPrecinct] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  1.5f },
+                { PopSocioeconomicClass.WhiteCollar, 1.0f },
+                { PopSocioeconomicClass.BlueCollar, -1.0f },   // policed, not protected
+                { PopSocioeconomicClass.Destitute,  -2.0f },   // actively hostile presence
+            },
+
+            // ── Housing (neutral as neighbors — residents don't choose to live
+            //    "near" housing, they choose to live IN housing) ────────────────
+            [BusinessTypes.PenthouseSpire] = AllClasses(0f),
+            [BusinessTypes.CorporateArcology] = AllClasses(0f),
+            [BusinessTypes.MegaBlockApartments] = AllClasses(0f),
+            [BusinessTypes.CoffinMotelSlum] = new()
+            {
+                { PopSocioeconomicClass.Capitalist, -1.5f },
+                { PopSocioeconomicClass.WhiteCollar,-1.0f },
+                { PopSocioeconomicClass.BlueCollar,  0.0f },
+                { PopSocioeconomicClass.Destitute,   0.0f },
+            },
+
+            // ── Vehicles ─────────────────────────────────────────────────────
+            [BusinessTypes.AutoDealership] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  0.5f },
+                { PopSocioeconomicClass.WhiteCollar, 1.0f },
+                { PopSocioeconomicClass.BlueCollar,  0.0f },
+                { PopSocioeconomicClass.Destitute,  -0.5f },
+            },
+        };
+
+        /// <summary>
+        /// Returns the amenity contribution of a business type toward a given
+        /// pop class at a given Manhattan distance, using inverse-distance decay.
+        /// Returns 0 if the business type has no entry and DefaultAmenityValue is 0.
+        /// </summary>
+        public static float GetAmenityContribution(
+            string businessType,
+            PopSocioeconomicClass popClass,
+            int distance)
+        {
+            float baseValue = DefaultAmenityValue;
+
+            if (AmenityValues.TryGetValue(businessType, out var classMap))
+            {
+                if (!classMap.TryGetValue(popClass, out baseValue))
+                    baseValue = DefaultAmenityValue;
+            }
+
+            if (baseValue == 0f) return 0f;
+
+            // Inverse-distance decay: full value at distance 0, halved at distance 1,
+            // approaching zero asymptotically. Distance is always >= 0.
+            return baseValue / (1f + distance);
+        }
+
+        // ── Pop Needs ────────────────────────────────────────────────────────
 
         // Needs are strictly defined per 100 people per day.
         public static Dictionary<PopSocioeconomicClass, Dictionary<MarketGood, float>> PopNeeds = new()
@@ -147,6 +405,8 @@ namespace CyberpunkGenerator.Economy
                 }
             }
         };
+
+        // ── Business Blueprints ──────────────────────────────────────────────
 
         public static Business CreateBusiness(string type)
         {
@@ -666,5 +926,19 @@ namespace CyberpunkGenerator.Economy
                 _ => BusinessTypes.Unknown
             };
         }
+
+        // ── Private helpers ──────────────────────────────────────────────────
+
+        /// <summary>
+        /// Convenience method to create a class-neutral amenity entry where
+        /// all four classes share the same value.
+        /// </summary>
+        private static Dictionary<PopSocioeconomicClass, float> AllClasses(float value) => new()
+        {
+            { PopSocioeconomicClass.Capitalist,  value },
+            { PopSocioeconomicClass.WhiteCollar, value },
+            { PopSocioeconomicClass.BlueCollar,  value },
+            { PopSocioeconomicClass.Destitute,   value },
+        };
     }
 }

@@ -10,6 +10,14 @@ namespace CyberpunkGenerator.Generators
     ///
     ///   • Each entity is attracted toward the centroid of the entities it
     ///     depends on (employers for Pops; customers / input suppliers for Businesses).
+    ///   • Pops are additionally attracted toward high-desirability coordinates as
+    ///     recorded in the per-class desirability heatmap, which accumulates amenity
+    ///     contributions from every placed business.
+    ///   • Commercial businesses are additionally attracted toward high residential
+    ///     density coordinates for their target class.
+    ///   • Residential placement scoring applies a height penalty: each projected
+    ///     floor above ground adds HeightPenaltyPerFloor effective distance units,
+    ///     creating organic density gradients without a hard tower height cap.
     ///   • Entities are placed in gentrification order (most affluent first).
     ///   • A higher-affluence entity may displace a lower-affluence entity that
     ///     occupies a desirable block, pushing the evicted entity back into the
@@ -25,6 +33,21 @@ namespace CyberpunkGenerator.Generators
         // All businesses already placed — used for gravity lookups.
         private readonly List<(Business business, CityBlock block)> _placedBusinesses = new();
 
+        // ── Desirability heatmap ─────────────────────────────────────────────
+        // Keyed by socioeconomic class, then by grid coordinate.
+        // Accumulates signed amenity contributions from every placed business,
+        // spread outward using inverse-distance decay up to AmenityWriteRadius.
+        // Queried in O(1) during pop placement scoring.
+        private readonly Dictionary<PopSocioeconomicClass, Dictionary<(int x, int y), float>>
+            _desirabilityMap = new();
+
+        // ── Population density map ───────────────────────────────────────────
+        // Keyed by socioeconomic class, then by grid coordinate.
+        // Tracks total resident headcount per class per cell.
+        // Queried by commercial business gravity to seek dense customer zones.
+        private readonly Dictionary<PopSocioeconomicClass, Dictionary<(int x, int y), int>>
+            _populationDensityMap = new();
+
         private static readonly Random _rng = new();
 
         public ZoningEngine(List<Pop> allPops, List<Business> allBusinesses)
@@ -33,6 +56,13 @@ namespace CyberpunkGenerator.Generators
             _pendingEntities = new List<IZoneable>();
             _pendingEntities.AddRange(allPops);
             _pendingEntities.AddRange(allBusinesses);
+
+            // Initialise desirability and density map buckets for all classes.
+            foreach (PopSocioeconomicClass cls in Enum.GetValues(typeof(PopSocioeconomicClass)))
+            {
+                _desirabilityMap[cls] = new Dictionary<(int, int), float>();
+                _populationDensityMap[cls] = new Dictionary<(int, int), int>();
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -61,6 +91,7 @@ namespace CyberpunkGenerator.Generators
             var seedBlock = _map.CreateBlock(0, 0, BlockType.Office);
             seedBlock.TryAddBusiness(seedHQ);
             _placedBusinesses.Add((seedHQ, seedBlock));
+            UpdateDesirabilityMap(seedHQ, 0, 0);
             Console.WriteLine("[Seed] Mega-Corp Headquarters placed at (0,0).");
 
             Console.WriteLine($"Starting Zoning Engine with {_pendingEntities.Count} entities to place.");
@@ -107,74 +138,84 @@ namespace CyberpunkGenerator.Generators
             //      b) an empty space where a new block can be created.
             //    Also track the closest occupied block whose class is strictly
             //    lower, which is a displacement candidate.
+            //
+            //    For residential pops, the effective distance is augmented by
+            //    a height penalty: ProjectedFloorCount * HeightPenaltyPerFloor.
+            //    This makes tall blocks less attractive than nearby empty land,
+            //    producing organic density gradients without a hard height cap.
 
-            CityBlock? bestDirectFit = null;       // existing block, no displacement needed
-            (int x, int y)? bestEmptyCoord = null; // empty coord for a brand-new block
-            CityBlock? bestDisplaceable = null;     // block we could gentrify into
-            int bestDistance = int.MaxValue;
+            CityBlock? bestDirectFit = null;
+            (int x, int y)? bestEmptyCoord = null;
+            CityBlock? bestDisplaceable = null;
+            float bestEffectiveDistance = float.MaxValue;
 
-            // BFS expanding rings until we have found at least one candidate
-            // and have exhausted the current distance shell.
             var visited = new HashSet<(int, int)>();
             var queue = new Queue<(int x, int y, int dist)>();
             queue.Enqueue((targetX, targetY, 0));
             visited.Add((targetX, targetY));
 
-            int cutoffDistance = int.MaxValue; // stop searching once we exceed the best found
+            // Cutoff in terms of raw Manhattan distance. We stop BFS expansion
+            // once the raw distance exceeds the best effective distance found
+            // so far (conservative: a block at raw distance d+1 with zero height
+            // penalty can never beat an effective distance of d).
+            float cutoffEffective = float.MaxValue;
 
             while (queue.Count > 0)
             {
                 var (cx, cy, dist) = queue.Dequeue();
 
-                // Prune: no point going farther than what we already have.
-                if (dist > cutoffDistance) break;
+                // Prune: raw distance already exceeds best effective distance found.
+                if (dist > cutoffEffective) break;
 
                 var existingBlock = _map.GetBlockAt(cx, cy);
 
+                // Compute effective distance for this coordinate.
+                float effectiveDist = ComputeEffectiveDistance(entity, existingBlock, cx, cy, dist);
+
                 if (existingBlock != null)
                 {
-                    // Can this block directly absorb the entity?
                     if (CanAccept(existingBlock, entity))
                     {
-                        if (dist < bestDistance || (dist == bestDistance && _rng.Next(2) == 0))
+                        if (effectiveDist < bestEffectiveDistance ||
+                            (effectiveDist == bestEffectiveDistance && _rng.Next(2) == 0))
                         {
                             bestDirectFit = existingBlock;
                             bestEmptyCoord = null;
-                            bestDistance = dist;
-                            cutoffDistance = dist; // no need to look farther
+                            bestEffectiveDistance = effectiveDist;
+                            cutoffEffective = effectiveDist;
                         }
                     }
-                    // Is it a displacement candidate (lower class, same placement type)?
                     else if (bestDirectFit == null && CanDisplace(existingBlock, entity))
                     {
-                        if (dist < bestDistance || (dist == bestDistance && _rng.Next(2) == 0))
+                        if (effectiveDist < bestEffectiveDistance ||
+                            (effectiveDist == bestEffectiveDistance && _rng.Next(2) == 0))
                         {
                             bestDisplaceable = existingBlock;
-                            bestDistance = dist;
+                            bestEffectiveDistance = effectiveDist;
                         }
                     }
                 }
                 else
                 {
                     // Empty coordinate — a new block could go here.
-                    // Only consider it if at least one occupied neighbor exists
-                    // (city must stay contiguous).
                     if (HasPlacedNeighbor(cx, cy))
                     {
+                        // For empty coords the effective distance equals raw distance
+                        // (no height penalty on an empty block).
                         if (bestDirectFit == null &&
-                            (dist < bestDistance || (dist == bestDistance && _rng.Next(2) == 0)))
+                            (dist < bestEffectiveDistance ||
+                             (dist == bestEffectiveDistance && _rng.Next(2) == 0)))
                         {
                             bestEmptyCoord = (cx, cy);
-                            bestDistance = dist;
-                            cutoffDistance = dist; // don't look farther for empties either
+                            bestEffectiveDistance = dist;
+                            cutoffEffective = dist;
                         }
                     }
                 }
 
-                // Expand neighbours if still within range.
                 foreach (var (nx, ny) in Cardinals(cx, cy))
                 {
-                    if (!visited.Contains((nx, ny)) && dist + 1 <= cutoffDistance + 1)
+                    if (!visited.Contains((nx, ny)) && dist + 1 <= cutoffEffective + 1)
                     {
                         visited.Add((nx, ny));
                         queue.Enqueue((nx, ny, dist + 1));
@@ -198,12 +239,41 @@ namespace CyberpunkGenerator.Generators
             }
             else
             {
-                // Last resort: expand the map at the first available adjacent empty.
                 var fallback = FindAnyAdjacentEmpty();
                 var newBlock = CreateBlockForEntity(fallback.x, fallback.y, entity);
                 CommitToBlock(newBlock, entity);
                 Console.WriteLine($"  [Fallback] {DescribeEntity(entity)} placed at ({fallback.x},{fallback.y}).");
             }
+        }
+
+        /// <summary>
+        /// Returns the effective distance for scoring a candidate coordinate.
+        /// For residential pops, adds a height penalty based on the projected
+        /// floor count if this pop were placed here.
+        /// For all other entity types, returns the raw Manhattan distance.
+        /// </summary>
+        private float ComputeEffectiveDistance(
+            IZoneable entity,
+            CityBlock? existingBlock,
+            int cx, int cy,
+            int manhattanDist)
+        {
+            if (entity is not Pop pop) return manhattanDist;
+
+            // Determine the sqm this pop (or its floor-capped split) would add.
+            int floorCapacity = pop.SocioeconomicClass switch
+            {
+                var c => (int)(EconomyBlueprints.FloorHeightSqm / EconomyBlueprints.SqmPerPerson[c])
+            };
+            int placementSize = Math.Min(pop.Size, floorCapacity);
+            int additionalSqm = placementSize * EconomyBlueprints.SqmPerPerson[pop.SocioeconomicClass];
+
+            int projectedFloor = existingBlock != null
+                ? existingBlock.ProjectedFloorCount(additionalSqm)
+                : 0; // empty block: ground floor, no penalty
+
+            float heightPenalty = projectedFloor * EconomyBlueprints.HeightPenaltyPerFloor;
+            return manhattanDist + heightPenalty;
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -229,36 +299,82 @@ namespace CyberpunkGenerator.Generators
         }
 
         /// <summary>
-        /// Pops want to live near their employers: businesses whose
-        /// RequiredLabor includes the pop's JobRole.
+        /// Pops want to live near two things, blended by weight:
+        ///   1. Their employers (businesses whose RequiredLabor includes their role).
+        ///   2. High-desirability coordinates for their class (from the heatmap).
+        ///
+        /// The amenity contribution is read directly from the precomputed
+        /// desirability map: O(1) lookup, no radius search required.
         /// </summary>
         private (float x, float y) GravityForPop(Pop pop)
         {
             var popRole = new JobRole(pop.SocioeconomicClass, pop.Field);
 
+            // ── Component 1: employer centroid ───────────────────────────────
             var employers = _placedBusinesses
                 .Where(pb => pb.business.RequiredLabor.ContainsKey(popRole))
                 .ToList();
 
-            return employers.Count > 0
+            (float ex, float ey) = employers.Count > 0
                 ? Centroid(employers.Select(pb => (pb.block.X, pb.block.Y)))
                 : (0f, 0f);
+
+            // ── Component 2: amenity-weighted centroid ───────────────────────
+            // Find all coordinates with a non-zero desirability score for this
+            // class, weight each by its score (skip negative — we want to be
+            // attracted toward positive amenities, not repelled from this step),
+            // and compute a weighted centroid.
+            (float ax, float ay) = AmenityCentroidForClass(pop.SocioeconomicClass);
+
+            // ── Blend ────────────────────────────────────────────────────────
+            // If amenity data is absent (early generation), fall back entirely
+            // to employer gravity.
+            bool hasAmenitySignal = ax != 0f || ay != 0f;
+
+            if (!hasAmenitySignal)
+                return (ex, ey);
+
+            float w = EconomyBlueprints.AmenityGravityWeight;
+            return (
+                ex * (1f - w) + ax * w,
+                ey * (1f - w) + ay * w
+            );
         }
 
         /// <summary>
         /// Commercial businesses want to be near their target customers.
+        /// This is a blend of:
+        ///   1. Centroid of blocks where the target class lives.
+        ///   2. Centroid weighted by population density of the target class,
+        ///      so businesses prefer the busiest corners over sparse outskirts.
         /// </summary>
         private (float x, float y) GravityForCommercialBusiness(Business biz)
         {
             if (!biz.TargetClass.HasValue) return (0f, 0f);
+            var cls = biz.TargetClass.Value;
 
+            // ── Component 1: target class block centroid ─────────────────────
             var customerBlocks = _map.AllBlocks
-                .Where(b => b.SocioeconomicLevel == biz.TargetClass.Value && b.Pops.Count > 0)
+                .Where(b => b.SocioeconomicLevel == cls && b.Pops.Count > 0)
                 .ToList();
 
-            return customerBlocks.Count > 0
+            (float cx, float cy) = customerBlocks.Count > 0
                 ? Centroid(customerBlocks.Select(b => (b.X, b.Y)))
                 : (0f, 0f);
+
+            // ── Component 2: density-weighted centroid ───────────────────────
+            (float dx, float dy) = DensityCentroidForClass(cls);
+
+            bool hasDensitySignal = dx != 0f || dy != 0f;
+
+            if (!hasDensitySignal)
+                return (cx, cy);
+
+            float w = EconomyBlueprints.DensityGravityWeight;
+            return (
+                cx * (1f - w) + dx * w,
+                cy * (1f - w) + dy * w
+            );
         }
 
         /// <summary>
@@ -278,10 +394,168 @@ namespace CyberpunkGenerator.Generators
                 : (0f, 0f);
         }
 
-        private static (float x, float y) Centroid(IEnumerable<(int x, int y)> points)
+        // ─────────────────────────────────────────────────────────────────────
+        // Heatmap updates
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Called after a business is committed to a block. Spreads the
+        /// business's amenity contributions outward up to AmenityWriteRadius
+        /// using inverse-distance decay, updating the desirability map for
+        /// every affected coordinate and class.
+        /// </summary>
+        private void UpdateDesirabilityMap(Business biz, int originX, int originY)
         {
-            var list = points.ToList();
-            return ((float)(list.Average(p => p.x)), (float)(list.Average(p => p.y)));
+            if (biz.BusinessType == null) return;
+
+            for (int dx = -EconomyBlueprints.AmenityWriteRadius;
+                     dx <= EconomyBlueprints.AmenityWriteRadius; dx++)
+            {
+                for (int dy = -EconomyBlueprints.AmenityWriteRadius;
+                         dy <= EconomyBlueprints.AmenityWriteRadius; dy++)
+                {
+                    int manhattanDist = Math.Abs(dx) + Math.Abs(dy);
+                    if (manhattanDist > EconomyBlueprints.AmenityWriteRadius) continue;
+
+                    var coord = (originX + dx, originY + dy);
+
+                    foreach (PopSocioeconomicClass cls in Enum.GetValues(typeof(PopSocioeconomicClass)))
+                    {
+                        float contribution = EconomyBlueprints.GetAmenityContribution(
+                            biz.BusinessType, cls, manhattanDist);
+
+                        if (contribution == 0f) continue;
+
+                        if (!_desirabilityMap[cls].ContainsKey(coord))
+                            _desirabilityMap[cls][coord] = 0f;
+
+                        _desirabilityMap[cls][coord] += contribution;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Called after a business is evicted during displacement. Subtracts its
+        /// previously written amenity contributions from the desirability map.
+        /// Minor floating-point drift over many displacement cycles is acceptable.
+        /// </summary>
+        private void RemoveFromDesirabilityMap(Business biz, int originX, int originY)
+        {
+            if (biz.BusinessType == null) return;
+
+            for (int dx = -EconomyBlueprints.AmenityWriteRadius;
+                     dx <= EconomyBlueprints.AmenityWriteRadius; dx++)
+            {
+                for (int dy = -EconomyBlueprints.AmenityWriteRadius;
+                         dy <= EconomyBlueprints.AmenityWriteRadius; dy++)
+                {
+                    int manhattanDist = Math.Abs(dx) + Math.Abs(dy);
+                    if (manhattanDist > EconomyBlueprints.AmenityWriteRadius) continue;
+
+                    var coord = (originX + dx, originY + dy);
+
+                    foreach (PopSocioeconomicClass cls in Enum.GetValues(typeof(PopSocioeconomicClass)))
+                    {
+                        float contribution = EconomyBlueprints.GetAmenityContribution(
+                            biz.BusinessType, cls, manhattanDist);
+
+                        if (contribution == 0f) continue;
+
+                        if (_desirabilityMap[cls].ContainsKey(coord))
+                            _desirabilityMap[cls][coord] -= contribution;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Called after a pop is committed to a block. Increments the
+        /// population density map for that class at that coordinate.
+        /// </summary>
+        private void UpdatePopulationDensityMap(Pop pop, int x, int y)
+        {
+            var cls = pop.SocioeconomicClass;
+            var coord = (x, y);
+
+            if (!_populationDensityMap[cls].ContainsKey(coord))
+                _populationDensityMap[cls][coord] = 0;
+
+            _populationDensityMap[cls][coord] += pop.Size;
+        }
+
+        /// <summary>
+        /// Called when a pop is evicted during displacement. Decrements the
+        /// population density map for that class at that coordinate.
+        /// </summary>
+        private void RemoveFromPopulationDensityMap(Pop pop, int x, int y)
+        {
+            var cls = pop.SocioeconomicClass;
+            var coord = (x, y);
+
+            if (_populationDensityMap[cls].ContainsKey(coord))
+                _populationDensityMap[cls][coord] =
+                    Math.Max(0, _populationDensityMap[cls][coord] - pop.Size);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Heatmap centroid helpers
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns a weighted centroid of all coordinates with positive
+        /// desirability for the given class. Coordinates with negative or zero
+        /// desirability are excluded — we want attraction toward amenities,
+        /// not repulsion away from nuisances, in the gravity target calculation.
+        /// (Repulsion is handled implicitly: pops avoid being placed near
+        /// industrial zones because those zones poison the desirability scores
+        /// of nearby coordinates, making those coordinates lose BFS contests
+        /// against cleaner alternatives.)
+        /// </summary>
+        private (float x, float y) AmenityCentroidForClass(PopSocioeconomicClass cls)
+        {
+            var map = _desirabilityMap[cls];
+            if (map.Count == 0) return (0f, 0f);
+
+            float totalWeight = 0f;
+            float wx = 0f, wy = 0f;
+
+            foreach (var (coord, score) in map)
+            {
+                if (score <= 0f) continue;
+                wx += coord.x * score;
+                wy += coord.y * score;
+                totalWeight += score;
+            }
+
+            return totalWeight > 0f
+                ? (wx / totalWeight, wy / totalWeight)
+                : (0f, 0f);
+        }
+
+        /// <summary>
+        /// Returns a weighted centroid of all coordinates where the given class
+        /// has residential population, weighted by headcount.
+        /// </summary>
+        private (float x, float y) DensityCentroidForClass(PopSocioeconomicClass cls)
+        {
+            var map = _populationDensityMap[cls];
+            if (map.Count == 0) return (0f, 0f);
+
+            float totalWeight = 0f;
+            float wx = 0f, wy = 0f;
+
+            foreach (var (coord, count) in map)
+            {
+                if (count <= 0) continue;
+                wx += coord.x * count;
+                wy += coord.y * count;
+                totalWeight += count;
+            }
+
+            return totalWeight > 0f
+                ? (wx / totalWeight, wy / totalWeight)
+                : (0f, 0f);
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -290,13 +564,8 @@ namespace CyberpunkGenerator.Generators
 
         private bool CanDisplace(CityBlock block, IZoneable incoming)
         {
-            // Industrial blocks are fixed infrastructure — they cannot be gentrified.
             if (block.Type == BlockType.Industrial) return false;
-
-            // The incoming entity must have a defined class to be "more affluent".
             if (!incoming.TargetClass.HasValue) return false;
-
-            // The block must actually be occupied by a lower class.
             if (!block.SocioeconomicLevel.HasValue) return false;
 
             return GetAffluenceScore(incoming.TargetClass) > GetAffluenceScore(block.SocioeconomicLevel);
@@ -307,26 +576,25 @@ namespace CyberpunkGenerator.Generators
             Console.WriteLine($"  [Gentrify] {DescribeEntity(incoming)} displaces " +
                               $"{block.SocioeconomicLevel} residents at Block {block.Id} ({block.X},{block.Y}).");
 
-            // Evict all existing pops and businesses back into the pending queue.
+            // Evict pops — update density map before re-queuing.
             foreach (var evictedPop in block.Pops)
             {
+                RemoveFromPopulationDensityMap(evictedPop, block.X, block.Y);
                 _pendingEntities.Add(evictedPop);
                 _displacementsThisPlacement++;
             }
 
+            // Evict businesses — update desirability map before re-queuing.
             foreach (var evictedBiz in block.Businesses)
             {
+                RemoveFromDesirabilityMap(evictedBiz, block.X, block.Y);
                 _placedBusinesses.RemoveAll(pb => pb.business == evictedBiz);
                 _pendingEntities.Add(evictedBiz);
                 _displacementsThisPlacement++;
             }
 
-            // Wipe the block's state so the incoming entity can take it over.
             block.Pops.Clear();
             block.Businesses.Clear();
-
-            // Reset the socioeconomic lock — CityBlock.AddPop / TryAddBusiness
-            // will re-lock it to the new class on first insertion.
             ResetBlockClass(block);
 
             CommitToBlock(block, incoming);
@@ -353,11 +621,9 @@ namespace CyberpunkGenerator.Generators
             switch (entity)
             {
                 case Pop pop:
-                    // The pop may be too large to fit in one block — split if needed.
                     int capacity = block.CalculateCapacityForClass(pop.SocioeconomicClass);
                     if (capacity <= 0)
                     {
-                        // Block is full for this class; re-queue and a new block will form.
                         _pendingEntities.Insert(0, pop);
                         return;
                     }
@@ -365,22 +631,23 @@ namespace CyberpunkGenerator.Generators
                     if (pop.Size > capacity)
                     {
                         var overflow = pop.Split(capacity);
-                        _pendingEntities.Insert(0, overflow); // re-queue the remainder at front
+                        _pendingEntities.Insert(0, overflow);
                     }
 
                     block.AddPop(pop);
+                    UpdatePopulationDensityMap(pop, block.X, block.Y);
                     Console.WriteLine($"  [Pop]     {pop} → Block {block.Id} ({block.X},{block.Y})");
                     break;
 
                 case Business biz:
                     if (!block.TryAddBusiness(biz))
                     {
-                        // Block rejected it (wrong zone or full) — re-queue.
                         _pendingEntities.Insert(0, biz);
                         return;
                     }
 
                     _placedBusinesses.Add((biz, block));
+                    UpdateDesirabilityMap(biz, block.X, block.Y);
                     Console.WriteLine($"  [Biz]     {biz.BusinessType} → Block {block.Id} ({block.X},{block.Y})");
                     break;
             }
@@ -412,8 +679,6 @@ namespace CyberpunkGenerator.Generators
                 foreach (var coord in _map.GetAdjacentEmptyCoordinates(block.X, block.Y))
                     return coord;
             }
-
-            // If the map is somehow empty, start at the origin.
             return (0, 0);
         }
 
@@ -441,17 +706,15 @@ namespace CyberpunkGenerator.Generators
             _ => e.ToString() ?? "Unknown"
         };
 
-        /// <summary>
-        /// Reflection-free way to reset a block's socioeconomic lock.
-        /// CityBlock exposes SocioeconomicLevel with an internal setter, so this
-        /// helper lives here in the same assembly (Generators sits in the
-        /// CyberpunkGenerator project alongside Models).
-        /// </summary>
         private static void ResetBlockClass(CityBlock block)
         {
-            // SocioeconomicLevel has an `internal set`, so this is legal from
-            // within the CyberpunkGenerator assembly.
             block.SocioeconomicLevel = null;
+        }
+
+        private static (float x, float y) Centroid(IEnumerable<(int x, int y)> points)
+        {
+            var list = points.ToList();
+            return (list.Average(p => p.x), list.Average(p => p.y));
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -478,10 +741,10 @@ namespace CyberpunkGenerator.Generators
                 int scoreX = GetAffluenceScore(x.TargetClass);
                 int scoreY = GetAffluenceScore(y.TargetClass);
                 if (scoreX != scoreY)
-                    return scoreY.CompareTo(scoreX); // highest first
+                    return scoreY.CompareTo(scoreX);
 
                 if (x.PlacementType != y.PlacementType)
-                    return y.PlacementType.CompareTo(x.PlacementType); // highest enum value first
+                    return y.PlacementType.CompareTo(x.PlacementType);
 
                 return x.PlacementSeed.CompareTo(y.PlacementSeed);
             }

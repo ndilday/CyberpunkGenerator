@@ -24,7 +24,6 @@ namespace CyberpunkGenerator.Models
         public List<Business> Businesses { get; private set; } = new();
         public List<Pop> Pops { get; private set; } = new();
 
-        public const int UsableResidentialSqm = 1_000_000;
         public const int MaxCommercialBusinesses = 10;
         public const int MaxWholeBlockBusinesses = 1;  // Industrial and Office both allow exactly one
 
@@ -35,6 +34,58 @@ namespace CyberpunkGenerator.Models
             X = x;
             Y = y;
         }
+
+        // ── Residential capacity ─────────────────────────────────────────────
+
+        public int GetUsedResidentialSqm() => Pops.Sum(p => p.RequiredSqm);
+
+        /// <summary>
+        /// Returns the projected floor count if <paramref name="additionalSqm"/>
+        /// of residential space were added to this block.
+        ///
+        /// Floor 1 is ground level (0 to FloorHeightSqm sqm occupied).
+        /// Integer division means a block that has used exactly one floor's worth
+        /// of sqm projects to floor 1 before the next resident is added,
+        /// floor 2 once that resident would push it past the threshold, etc.
+        ///
+        /// Used by the ZoningEngine to compute a height penalty during BFS
+        /// scoring: a block that would become a 10-storey tower is treated as
+        /// (10 * HeightPenaltyPerFloor) map units farther away than it physically is.
+        /// </summary>
+        public int ProjectedFloorCount(int additionalSqm)
+        {
+            return (int)((GetUsedResidentialSqm() + additionalSqm) / EconomyBlueprints.FloorHeightSqm);
+        }
+
+        public int GetRemainingResidentialSqm()
+        {
+            // Industrial blocks have no residential space.
+            // Office blocks are whole-block businesses — no room for residents.
+            if (Type is BlockType.Industrial or BlockType.Office) return 0;
+            return int.MaxValue - GetUsedResidentialSqm(); // unbounded — towers grow as tall as needed
+        }
+
+        /// <summary>
+        /// Returns how many residents of <paramref name="popClass"/> can be
+        /// placed on this block in a single placement pass: one floor's worth.
+        ///
+        /// Capping at one floor per pass keeps the height accumulation granular
+        /// so that the ZoningEngine's BFS always re-evaluates height penalties
+        /// before committing another floor of population to the same block.
+        /// Returns 0 if the block cannot accept this class at all.
+        /// </summary>
+        public int CalculateCapacityForClass(PopSocioeconomicClass popClass)
+        {
+            if (Type is BlockType.Industrial or BlockType.Office) return 0;
+            if (SocioeconomicLevel.HasValue && SocioeconomicLevel.Value != popClass) return 0;
+
+            // One floor's worth at a time so the ZoningEngine reassesses height
+            // penalty before placing the next tranche of residents.
+            int sqmPerPerson = EconomyBlueprints.SqmPerPerson[popClass];
+            return (int)(EconomyBlueprints.FloorHeightSqm / sqmPerPerson);
+        }
+
+        // ── Business placement ───────────────────────────────────────────────
 
         public bool CanFitBusiness(Business b)
         {
@@ -89,27 +140,7 @@ namespace CyberpunkGenerator.Models
             return true;
         }
 
-        public int GetUsedResidentialSqm() => Pops.Sum(p => p.RequiredSqm);
-
-        public int GetRemainingResidentialSqm()
-        {
-            // Industrial blocks have no residential space.
-            // Office blocks are whole-block businesses — no room for residents.
-            if (Type is BlockType.Industrial or BlockType.Office) return 0;
-            return UsableResidentialSqm - GetUsedResidentialSqm();
-        }
-
-        public int CalculateCapacityForClass(PopSocioeconomicClass popClass)
-        {
-            if (Type is BlockType.Industrial or BlockType.Office) return 0;
-            if (SocioeconomicLevel.HasValue && SocioeconomicLevel.Value != popClass) return 0;
-
-            int remainingSqm = GetRemainingResidentialSqm();
-            if (remainingSqm <= 0) return 0;
-
-            int sqmPerPerson = EconomyBlueprints.SqmPerPerson[popClass];
-            return remainingSqm / sqmPerPerson;
-        }
+        // ── Pop placement ────────────────────────────────────────────────────
 
         public void AddPop(Pop pop)
         {
@@ -121,24 +152,23 @@ namespace CyberpunkGenerator.Models
                 throw new InvalidOperationException(
                     $"Block is locked to {SocioeconomicLevel.Value}, cannot add {pop.SocioeconomicClass}.");
 
-            if (pop.RequiredSqm > GetRemainingResidentialSqm())
-                throw new InvalidOperationException(
-                    "Pop exceeds block residential capacity. Split it first.");
-
             if (!SocioeconomicLevel.HasValue)
                 SocioeconomicLevel = pop.SocioeconomicClass;
 
             Pops.Add(pop);
         }
 
+        // ── Diagnostics ──────────────────────────────────────────────────────
+
         public override string ToString()
         {
             int maxBiz = Type == BlockType.MixedUse ? MaxCommercialBusinesses : MaxWholeBlockBusinesses;
             string classLabel = SocioeconomicLevel.HasValue ? $"[{SocioeconomicLevel.Value}]" : "[Empty]";
             int popCount = Pops.Sum(p => p.Size);
+            int floors = ProjectedFloorCount(0);
 
             return $"Block {Id} at ({X},{Y}) ({Type}) {classLabel} | " +
-                   $"Businesses: {Businesses.Count}/{maxBiz} | Pops: {popCount}";
+                   $"Businesses: {Businesses.Count}/{maxBiz} | Pops: {popCount} | Floors: {floors}";
         }
     }
 }

@@ -714,7 +714,7 @@ namespace CyberpunkGenerator.Generators
         private static (float x, float y) Centroid(IEnumerable<(int x, int y)> points)
         {
             var list = points.ToList();
-            return (list.Average(p => p.x), list.Average(p => p.y));
+            return ((float)list.Average(p => p.x), (float)list.Average(p => p.y));
         }
 
         // ─────────────────────────────────────────────────────────────────────

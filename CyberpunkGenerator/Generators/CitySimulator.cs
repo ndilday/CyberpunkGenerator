@@ -1,4 +1,4 @@
-using CyberpunkGenerator.Data;
+﻿using CyberpunkGenerator.Data;
 using CyberpunkGenerator.Economy;
 using CyberpunkGenerator.Models;
 
@@ -10,7 +10,8 @@ namespace CyberpunkGenerator.Generators
         private List<Business> _allBusinesses = new();
 
         /// <summary>
-        /// Runs the organic economic expansion loop and returns the full
+        /// Runs the organic economic expansion loop, then seeds transportation
+        /// businesses heuristically based on city scale, and returns the full
         /// population and business lists for the ZoningEngine to consume.
         /// </summary>
         public (List<Pop> Pops, List<Business> Businesses) GenerateOrganicCity()
@@ -24,7 +25,7 @@ namespace CyberpunkGenerator.Generators
             bool needsMet = false;
             int loopSafeguard = 0;
 
-            // 2. THE EXPANSION LOOP
+            // ── THE EXPANSION LOOP ───────────────────────────────────────────
             while (!needsMet && loopSafeguard < 100)
             {
                 loopSafeguard++;
@@ -68,7 +69,81 @@ namespace CyberpunkGenerator.Generators
             Console.WriteLine($"Total Population: {_allPops.Sum(p => p.Size)}");
             Console.WriteLine($"Total Businesses: {_allBusinesses.Count}");
 
+            // ── TRANSPORTATION SEEDING ───────────────────────────────────────
+            // Now that the economy is stable, heuristically estimate how many
+            // transportation businesses the city will need and add them to the
+            // pool before ZoningEngine runs. This ensures transit depots and
+            // distribution hubs are placed alongside the city they serve rather
+            // than in a secondary pass on the outskirts.
+            //
+            // These are estimates — the ZoningEngine's contract/patronage link
+            // formation will determine actual utilization. A small top-up pass
+            // in ZonedCityGenerator handles any remaining unmet transport demand.
+            SeedTransportationBusinesses();
+
             return (_allPops, _allBusinesses);
+        }
+
+        /// <summary>
+        /// Heuristically estimates transportation business need based on city
+        /// scale and seeds the business and labor pools accordingly.
+        ///
+        /// TransitDepots: one per TransitDepotPopsPerDepot total population,
+        /// rounded up. Transit serves all classes but is sized against total pop
+        /// since every class generates passenger mobility demand.
+        ///
+        /// DistributionHubs: one per DistributionHubsPerIndustrialBusiness
+        /// industrial businesses, rounded up. Industrial businesses generate
+        /// the bulk of freight demand through their input goods requirements.
+        /// </summary>
+        private void SeedTransportationBusinesses()
+        {
+            int totalPop = _allPops.Sum(p => p.Size);
+            int industrialBizCount = _allBusinesses.Count(
+                b => b.ZoneType == BusinessZoneType.Industrial);
+
+            int transitDepotCount = (int)Math.Ceiling(
+                (double)totalPop / EconomyConstants.TransitDepotPopsPerDepot);
+
+            int distributionHubCount = (int)Math.Ceiling(
+                (double)industrialBizCount / EconomyConstants.DistributionHubsPerIndustrialBusiness);
+
+            Console.WriteLine($"\n=== Transportation Seeding ===");
+            Console.WriteLine($"  Population: {totalPop:N0} → {transitDepotCount} Transit Depots");
+            Console.WriteLine($"  Industrial businesses: {industrialBizCount} → {distributionHubCount} Distribution Hubs");
+
+            for (int i = 0; i < transitDepotCount; i++)
+            {
+                var depot = EconomyBlueprints.CreateBusiness(BusinessTypes.TransitDepot);
+                _allBusinesses.Add(depot);
+            }
+
+            for (int i = 0; i < distributionHubCount; i++)
+            {
+                var hub = EconomyBlueprints.CreateBusiness(BusinessTypes.DistributionHub);
+                _allBusinesses.Add(hub);
+            }
+
+            // Transportation businesses require workers. Run a single targeted
+            // labor pass to cover their RequiredLabor before handing off to
+            // the ZoningEngine. We don't need a full goods deficit re-check
+            // here — transportation businesses consume Automobiles and
+            // Electricity, both of which are already produced in surplus by
+            // this point in the simulation.
+            var transportLaborDeficits = CalculateLaborDeficits();
+            foreach (var laborNeed in transportLaborDeficits)
+            {
+                if (laborNeed.Value > 0)
+                {
+                    AddPops(laborNeed.Key.Class, laborNeed.Key.Field, laborNeed.Value);
+                    Console.WriteLine($"  [Transport Labor] {laborNeed.Value} " +
+                                      $"{laborNeed.Key.Class} {laborNeed.Key.Field} workers arrived.");
+                }
+            }
+
+            Console.WriteLine($"  Transportation seeding complete. " +
+                              $"Total businesses: {_allBusinesses.Count}, " +
+                              $"Total population: {_allPops.Sum(p => p.Size):N0}");
         }
 
         private void AddPops(PopSocioeconomicClass popClass, PopField field, int size)

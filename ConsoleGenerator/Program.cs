@@ -32,6 +32,13 @@ public class Program
                           $"{city.Gangs.Count} gangs");
         Console.WriteLine(new string('═', 60));
 
+        // ── Transportation Summary ────────────────────────────────────────────
+        Console.WriteLine("\n┌─ TRANSPORTATION ─────────────────────────────────────┐");
+        Console.WriteLine($"│  Pop transport demand:     {city.PopTransportationPoints,14:N0} TP");
+        Console.WriteLine($"│  Freight transport demand: {city.FreightTransportationPoints,14:N0} TP");
+        Console.WriteLine($"│  Total:                    {city.TotalTransportationPoints,14:N0} TP");
+        Console.WriteLine("└──────────────────────────────────────────────────────┘");
+
         // ── Gangs ────────────────────────────────────────────────────────────
         Console.WriteLine("\n┌─ GANGS & TERRITORY ──────────────────────────────────┐");
         foreach (var gang in city.Gangs.OrderByDescending(g => g.Power))

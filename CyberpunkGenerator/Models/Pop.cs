@@ -20,6 +20,30 @@ namespace CyberpunkGenerator.Models
         // Dynamically calculates required space based on the central blueprints
         public int RequiredSqm => Size * EconomyBlueprints.SqmPerPerson[SocioeconomicClass];
 
+        // ── Bidirectional patronage tracking ─────────────────────────────────
+
+        /// <summary>
+        /// All patronage links where this pop is the consumer.
+        /// A pop may have multiple links for the same good type if no single
+        /// business could fulfill its entire need.
+        /// </summary>
+        public List<Patronage> OutboundPatronage { get; } = new();
+
+        /// <summary>
+        /// Releases all patronage links, freeing reserved capacity on all
+        /// supplier businesses. Called when this pop is evicted during
+        /// displacement. The pop re-forms links when re-placed.
+        /// </summary>
+        public void ReleaseAllLinks()
+        {
+            foreach (var patronage in OutboundPatronage)
+            {
+                patronage.Supplier.ReleaseCapacity(patronage.Good, patronage.Quantity);
+                patronage.Supplier.InboundPatronage.Remove(patronage);
+            }
+            OutboundPatronage.Clear();
+        }
+
         public Pop Split(int sizeToExtract)
         {
             if (sizeToExtract >= Size || sizeToExtract <= 0)

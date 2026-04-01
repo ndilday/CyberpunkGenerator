@@ -24,6 +24,16 @@ namespace CyberpunkGenerator.Generators
             var zoningEngine = new ZoningEngine(allPops, allBusinesses);
             var cityMap = zoningEngine.GenerateMap();
 
+            // ── Phase B.5: Transportation point calculation ──────────────────
+            // Contract and Patronage links were formed during Phase B as each
+            // entity was placed. Now that all entities are on the map, sum up
+            // the transportation points across all links.
+            var (popTP, freightTP) = zoningEngine.CalculateTransportationPoints();
+            Console.WriteLine($"\n=== Transportation Points ===");
+            Console.WriteLine($"  Pop transport:     {popTP:N0} TP");
+            Console.WriteLine($"  Freight transport: {freightTP:N0} TP");
+            Console.WriteLine($"  Total:             {popTP + freightTP:N0} TP");
+
             // ── Phase C: Group blocks → Neighborhoods ────────────────────────
             Console.WriteLine("\n=== Phase C: Neighborhood Formation ===");
             var neighborhoods = BuildNeighborhoods(cityMap);
@@ -37,7 +47,9 @@ namespace CyberpunkGenerator.Generators
             {
                 Name = NameBanks.CityNames.GetRandom(),
                 Neighborhoods = neighborhoods,
-                Gangs = gangs
+                Gangs = gangs,
+                PopTransportationPoints = popTP,
+                FreightTransportationPoints = freightTP,
             };
 
             Console.WriteLine($"\nCity \"{city.Name}\" generated: " +
@@ -47,18 +59,14 @@ namespace CyberpunkGenerator.Generators
 
         // ─────────────────────────────────────────────────────────────────────
         // Neighborhood formation
-        //
-        // Strategy: flood-fill contiguous regions of the same SocioeconomicLevel.
-        // Each contiguous island becomes one Neighborhood. Unclassed industrial
-        // blocks are merged into whichever adjacent neighborhood is largest.
         // ─────────────────────────────────────────────────────────────────────
+
         private static List<Neighborhood> BuildNeighborhoods(CityMap cityMap)
         {
             var allBlocks = cityMap.AllBlocks.ToList();
-            var visited = new HashSet<int>(); // block IDs
+            var visited = new HashSet<int>();
             var neighborhoods = new List<Neighborhood>();
 
-            // Group contiguous same-class MixedUse blocks via BFS
             foreach (var block in allBlocks)
             {
                 if (visited.Contains(block.Id)) continue;
@@ -89,7 +97,6 @@ namespace CyberpunkGenerator.Generators
                 neighborhoods.Add(hood);
             }
 
-            // Attach orphaned industrial blocks to the nearest neighborhood
             foreach (var block in allBlocks.Where(b => b.Type == BlockType.Industrial && !visited.Contains(b.Id)))
             {
                 visited.Add(block.Id);
@@ -102,7 +109,6 @@ namespace CyberpunkGenerator.Generators
                     nearest.Blocks.Add(block);
                 else
                 {
-                    // Edge case: only industrial blocks exist (shouldn't happen in a seeded city)
                     var solo = new Neighborhood
                     {
                         Name = "Industrial Wasteland",
@@ -126,7 +132,6 @@ namespace CyberpunkGenerator.Generators
                 .OrderByDescending(g => g.Count())
                 .FirstOrDefault()?.Key;
 
-            // Grit: inverse of affluence (Capitalist = 1, Destitute = 9)
             int grit = dominantClass switch
             {
                 PopSocioeconomicClass.Capitalist => 1,
@@ -136,7 +141,6 @@ namespace CyberpunkGenerator.Generators
                 _ => 5
             };
 
-            // TechLevel: mirrors affluence
             int tech = dominantClass switch
             {
                 PopSocioeconomicClass.Capitalist => 10,
@@ -157,7 +161,6 @@ namespace CyberpunkGenerator.Generators
                 Blocks = blocks
             };
 
-            // Aggregate pops from all blocks
             foreach (var pop in blocks.SelectMany(b => b.Pops))
                 hood.Pops.Add(pop);
 
@@ -176,14 +179,10 @@ namespace CyberpunkGenerator.Generators
 
         // ─────────────────────────────────────────────────────────────────────
         // Gang assignment
-        //
-        // Each gang spawns in a neighborhood whose Grit >= 5.
-        // Power is proportional to neighborhood population density.
-        // Gangs claim contiguous low-affluence territory.
         // ─────────────────────────────────────────────────────────────────────
+
         private static List<Gang> AssignGangs(List<Neighborhood> neighborhoods, CityMap cityMap)
         {
-            // ── 1. Identify eligible neighborhoods ───────────────────────────────
             var eligible = neighborhoods
                 .Where(n => n.Grit >= 5)
                 .ToList();
@@ -194,22 +193,17 @@ namespace CyberpunkGenerator.Generators
                 return new List<Gang>();
             }
 
-            // ── 2. Build a spatial adjacency map: neighborhood → neighbor hoods ──
-            // Two neighborhoods are adjacent when they share at least one grid edge
-            // (i.e., a block in A is at distance 1 from a block in B on the CityMap).
             var neighborhoodAdjacency = BuildNeighborhoodAdjacency(neighborhoods, cityMap);
 
-            // ── 3. Score and pick HQs ────────────────────────────────────────────
             int gangCount = Math.Max(1, eligible.Count / 2);
 
-            // Score: Grit is weighted heavily; population density is a tiebreaker.
             int Score(Neighborhood n)
             {
                 int pop = n.Blocks.SelectMany(b => b.Pops).Sum(p => p.Size);
                 return n.Grit * 3 + pop / 1_000;
             }
 
-            var claimed = new HashSet<string>();   // neighborhood names already assigned
+            var claimed = new HashSet<string>();
             var gangList = new List<Gang>();
             var gangTerritoryMap = new Dictionary<Gang, HashSet<string>>();
 
@@ -219,7 +213,6 @@ namespace CyberpunkGenerator.Generators
 
             for (int i = 0; i < gangCount; i++)
             {
-                // Pick the highest-scoring unclaimed neighborhood as HQ.
                 var hq = candidatesByScore.FirstOrDefault(n => !claimed.Contains(n.Name));
                 if (hq == null) break;
 
@@ -246,12 +239,9 @@ namespace CyberpunkGenerator.Generators
                 Console.WriteLine($"  Gang spawned: {gang} — HQ: {hq.Name}");
             }
 
-            // ── 4. Territorial expansion ─────────────────────────────────────────
-            // Gangs take turns (strongest first) claiming one adjacent unclaimed
-            // gritty neighborhood per turn.  Stops when no expansion is possible.
             bool expanded = true;
             int expansionRound = 0;
-            int maxRounds = neighborhoods.Count; // hard safety cap
+            int maxRounds = neighborhoods.Count;
 
             while (expanded && expansionRound < maxRounds)
             {
@@ -262,22 +252,18 @@ namespace CyberpunkGenerator.Generators
                 {
                     var ownedNames = gangTerritoryMap[gang];
 
-                    // Collect all gritty unclaimed neighborhoods spatially adjacent
-                    // to any neighborhood this gang already owns.
                     Neighborhood? best = null;
                     int bestScore = -1;
 
                     foreach (var ownedName in ownedNames)
                     {
-                        var owned = neighborhoods.First(n => n.Name == ownedName);
-
                         if (!neighborhoodAdjacency.TryGetValue(ownedName, out var adjacentHoods))
                             continue;
 
                         foreach (var candidate in adjacentHoods)
                         {
                             if (claimed.Contains(candidate.Name)) continue;
-                            if (candidate.Grit < 5) continue; // gangs don't bother with affluent zones
+                            if (candidate.Grit < 5) continue;
 
                             int s = Score(candidate);
                             if (s > bestScore)
@@ -300,10 +286,6 @@ namespace CyberpunkGenerator.Generators
                 }
             }
 
-            // ── 5. Rivalry detection ─────────────────────────────────────────────
-            // Two gangs are rivals when they own adjacent neighborhoods and at least
-            // one of those border neighborhoods has Grit >= 7 (a hot zone).
-            // The Gang model doesn't have a Rivals list yet, so we just log it.
             Console.WriteLine("\n  Rivalry check:");
             bool anyRivalry = false;
 
@@ -322,7 +304,6 @@ namespace CyberpunkGenerator.Generators
 
                     if (areRivals)
                     {
-                        // Check if any shared border is a hot zone (Grit >= 7)
                         bool hotBorder = gangA.ControlledTerritory
                             .Where(na => neighborhoodAdjacency.TryGetValue(na.Name, out var adj2)
                                          && adj2.Any(nb => gangB.ControlledTerritory.Any(t => t.Name == nb.Name)))
@@ -346,19 +327,10 @@ namespace CyberpunkGenerator.Generators
             return gangList;
         }
 
-        // ── Adjacency helper ─────────────────────────────────────────────────────────
-        //
-        // Builds a dictionary mapping each neighborhood name to the set of
-        // neighborhoods that are spatially adjacent to it on the CityMap grid.
-        //
-        // Two neighborhoods are adjacent when at least one block from each is a
-        // cardinal neighbor (Manhattan distance == 1) of the other.
-
         private static Dictionary<string, List<Neighborhood>> BuildNeighborhoodAdjacency(
             List<Neighborhood> neighborhoods,
             CityMap cityMap)
         {
-            // Index every block coordinate to its neighborhood for fast lookup.
             var coordToHood = new Dictionary<(int x, int y), Neighborhood>();
             foreach (var hood in neighborhoods)
                 foreach (var block in hood.Blocks)
@@ -381,12 +353,11 @@ namespace CyberpunkGenerator.Generators
                         if (neighborHood.Name == hood.Name) continue;
 
                         adjacency[hood.Name].Add(neighborHood.Name);
-                        adjacency[neighborHood.Name].Add(hood.Name); // symmetric
+                        adjacency[neighborHood.Name].Add(hood.Name);
                     }
                 }
             }
 
-            // Convert to List<Neighborhood> for the caller's convenience.
             var result = new Dictionary<string, List<Neighborhood>>();
             var hoodByName = neighborhoods.ToDictionary(n => n.Name);
 

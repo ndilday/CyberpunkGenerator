@@ -9,7 +9,7 @@
         SimRealSets,
         HoloScreens,
         PersonalTerminals,
-        Data,               // NEW: Intermediate Good
+        Data,               // Intermediate Good
 
         // Life/Home
         BasicFood,
@@ -29,15 +29,19 @@
         LuxuryHousing,
 
         // Augmentations & Biotech
-        BasicCybernetics,   // NEW
-        LuxuryCybernetics,  // NEW
-        GeneticTailoring,   // NEW
+        BasicCybernetics,
+        LuxuryCybernetics,
+        GeneticTailoring,
 
         // Services
         MedicalCare,
         Security,
         Logistics,
-        CorporateServices,  // NEW: Intermediate Good
+        CorporateServices,  // Intermediate Good
+
+        // Transportation
+        PopTransport,       // Passenger mobility fulfilled by TransitDepots
+        FreightTransport,   // Goods movement fulfilled by DistributionHubs
 
         // Industrial / Intermediate
         Electricity,
@@ -47,7 +51,7 @@
         ManufacturedGoods,
         RawMaterials,
         Weapons,
-        MedicalEquipment    // NEW: Intermediate Good
+        MedicalEquipment    // Intermediate Good
     }
 
     public enum GoodState { Wholesale, Retail }

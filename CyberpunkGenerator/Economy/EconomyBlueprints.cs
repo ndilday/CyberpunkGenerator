@@ -70,6 +70,10 @@ namespace CyberpunkGenerator.Economy
         public const string CorpMedClinic = "Corp-Med Clinic";
         public const string CorpSecPrecinct = "Corp-Sec Precinct";
 
+        // Transportation
+        public const string TransitDepot = "Transit Depot";
+        public const string DistributionHub = "Distribution Hub";
+
         // Unknown
         public const string Unknown = "Unknown, Unexpected Business";
     }
@@ -170,18 +174,37 @@ namespace CyberpunkGenerator.Economy
             [BusinessTypes.DesignerStudio] = AllClasses(-0.5f),
             [BusinessTypes.ArtisanWoodworker] = AllClasses(-0.5f),
 
+            // ── Transportation Infrastructure ────────────────────────────────
+            // Undesirable to live near but less severe than heavy industry.
+            // Transit Depots are slightly more tolerable than Distribution Hubs
+            // since they serve passenger needs rather than hauling bulk freight.
+            [BusinessTypes.TransitDepot] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  -1.5f },
+                { PopSocioeconomicClass.WhiteCollar, -1.0f },
+                { PopSocioeconomicClass.BlueCollar,  -0.5f },  // workers here, tolerate it more
+                { PopSocioeconomicClass.Destitute,    0.0f },  // transit access is a lifeline
+            },
+            [BusinessTypes.DistributionHub] = new()
+            {
+                { PopSocioeconomicClass.Capitalist,  -2.0f },
+                { PopSocioeconomicClass.WhiteCollar, -1.5f },
+                { PopSocioeconomicClass.BlueCollar,  -1.0f },
+                { PopSocioeconomicClass.Destitute,   -0.5f },
+            },
+
             // ── Corporate Anchors (prestigious but not pleasant neighbors) ───
             [BusinessTypes.MegaCorpHeadquarters] = new()
             {
-                { PopSocioeconomicClass.Capitalist,  1.0f },   // exec proximity is desirable
-                { PopSocioeconomicClass.WhiteCollar, 0.5f },   // near work
+                { PopSocioeconomicClass.Capitalist,  1.0f },
+                { PopSocioeconomicClass.WhiteCollar, 0.5f },
                 { PopSocioeconomicClass.BlueCollar, -1.0f },
                 { PopSocioeconomicClass.Destitute,  -1.5f },
             },
             [BusinessTypes.OrbitalResearchFacility] = new()
             {
                 { PopSocioeconomicClass.Capitalist,  0.5f },
-                { PopSocioeconomicClass.WhiteCollar, 1.0f },   // scientists want to live near the lab
+                { PopSocioeconomicClass.WhiteCollar, 1.0f },
                 { PopSocioeconomicClass.BlueCollar, -0.5f },
                 { PopSocioeconomicClass.Destitute,  -1.0f },
             },
@@ -192,14 +215,14 @@ namespace CyberpunkGenerator.Economy
                 { PopSocioeconomicClass.Capitalist,  0.0f },
                 { PopSocioeconomicClass.WhiteCollar, 0.5f },
                 { PopSocioeconomicClass.BlueCollar,  1.5f },
-                { PopSocioeconomicClass.Destitute,   2.0f },   // critical amenity for the poor
+                { PopSocioeconomicClass.Destitute,   2.0f },
             },
             [BusinessTypes.GourmetMarket] = new()
             {
                 { PopSocioeconomicClass.Capitalist,  1.5f },
                 { PopSocioeconomicClass.WhiteCollar, 2.0f },
                 { PopSocioeconomicClass.BlueCollar,  0.0f },
-                { PopSocioeconomicClass.Destitute,  -0.5f },   // visible wealth disparity
+                { PopSocioeconomicClass.Destitute,  -0.5f },
             },
             [BusinessTypes.DiveBar] = new()
             {
@@ -260,9 +283,9 @@ namespace CyberpunkGenerator.Economy
             // ── Augmentations & Biotech ──────────────────────────────────────
             [BusinessTypes.RipperdocClinic] = new()
             {
-                { PopSocioeconomicClass.Capitalist, -1.0f },   // seedy
+                { PopSocioeconomicClass.Capitalist, -1.0f },
                 { PopSocioeconomicClass.WhiteCollar,-0.5f },
-                { PopSocioeconomicClass.BlueCollar,  1.5f },   // necessary and accessible
+                { PopSocioeconomicClass.BlueCollar,  1.5f },
                 { PopSocioeconomicClass.Destitute,   1.0f },
             },
             [BusinessTypes.ChromeBoutique] = new()
@@ -285,19 +308,18 @@ namespace CyberpunkGenerator.Economy
             {
                 { PopSocioeconomicClass.Capitalist,  1.0f },
                 { PopSocioeconomicClass.WhiteCollar, 2.0f },
-                { PopSocioeconomicClass.BlueCollar,  0.0f },   // can't afford it, not relevant
-                { PopSocioeconomicClass.Destitute,  -0.5f },   // reminder of inaccessibility
+                { PopSocioeconomicClass.BlueCollar,  0.0f },
+                { PopSocioeconomicClass.Destitute,  -0.5f },
             },
             [BusinessTypes.CorpSecPrecinct] = new()
             {
                 { PopSocioeconomicClass.Capitalist,  1.5f },
                 { PopSocioeconomicClass.WhiteCollar, 1.0f },
-                { PopSocioeconomicClass.BlueCollar, -1.0f },   // policed, not protected
-                { PopSocioeconomicClass.Destitute,  -2.0f },   // actively hostile presence
+                { PopSocioeconomicClass.BlueCollar, -1.0f },
+                { PopSocioeconomicClass.Destitute,  -2.0f },
             },
 
-            // ── Housing (neutral as neighbors — residents don't choose to live
-            //    "near" housing, they choose to live IN housing) ────────────────
+            // ── Housing (neutral as neighbors) ───────────────────────────────
             [BusinessTypes.PenthouseSpire] = AllClasses(0f),
             [BusinessTypes.CorporateArcology] = AllClasses(0f),
             [BusinessTypes.MegaBlockApartments] = AllClasses(0f),
@@ -321,13 +343,15 @@ namespace CyberpunkGenerator.Economy
 
         /// <summary>
         /// Returns the amenity contribution of a business type toward a given
-        /// pop class at a given Manhattan distance, using inverse-distance decay.
+        /// pop class at a given Manhattan distance, using inverse-distance decay,
+        /// scaled by the business's current capacity utilization multiplier.
         /// Returns 0 if the business type has no entry and DefaultAmenityValue is 0.
         /// </summary>
         public static float GetAmenityContribution(
             string businessType,
             PopSocioeconomicClass popClass,
-            int distance)
+            int distance,
+            float capacityMultiplier = 1f)
         {
             float baseValue = DefaultAmenityValue;
 
@@ -339,14 +363,24 @@ namespace CyberpunkGenerator.Economy
 
             if (baseValue == 0f) return 0f;
 
-            // Inverse-distance decay: full value at distance 0, halved at distance 1,
-            // approaching zero asymptotically. Distance is always >= 0.
-            return baseValue / (1f + distance);
+            // Only scale positive amenity values by capacity — a negative amenity
+            // (industrial nuisance) is not less unpleasant because the business
+            // is busy; it's always unpleasant regardless of utilization.
+            float effectiveValue = baseValue > 0f
+                ? baseValue * capacityMultiplier
+                : baseValue;
+
+            // Inverse-distance decay: full value at distance 0, halved at distance 1.
+            return effectiveValue / (1f + distance);
         }
 
         // ── Pop Needs ────────────────────────────────────────────────────────
 
         // Needs are strictly defined per 100 people per day.
+        // Note: Housing needs are excluded from transportation calculations since
+        // a pop always lives at distance 0 from its own housing.
+        // PopTransport and FreightTransport needs are derived dynamically from
+        // contract/patronage links and are not listed here as static needs.
         public static Dictionary<PopSocioeconomicClass, Dictionary<MarketGood, float>> PopNeeds = new()
         {
             {
@@ -404,6 +438,26 @@ namespace CyberpunkGenerator.Economy
                     { Retail(GoodType.Liquor), 50f }
                 }
             }
+        };
+
+        // ── Housing good types — excluded from transportation calculations ────
+        // A pop always lives at distance 0 from its housing, so housing needs
+        // never generate transportation points. This set is used by the
+        // ZoningEngine's link formation logic to skip housing when computing
+        // patronage links and transportation costs.
+        public static readonly HashSet<GoodType> HousingGoodTypes = new()
+        {
+            GoodType.SlumHousing,
+            GoodType.BasicHousing,
+            GoodType.ComfortableHousing,
+            GoodType.LuxuryHousing,
+        };
+
+        // ── Goods excluded from freight transportation calculations ──────────
+        // Electricity is handled as infrastructure rather than transported goods.
+        public static readonly HashSet<GoodType> FreightExcludedGoodTypes = new()
+        {
+            GoodType.Electricity,
         };
 
         // ── Business Blueprints ──────────────────────────────────────────────
@@ -858,6 +912,42 @@ namespace CyberpunkGenerator.Economy
                     b.RequiredLabor.Add(JobRole.BlueCollarMilitary, 80);
                     b.RequiredLabor.Add(JobRole.WhiteCollarMilitary, 20);
                     break;
+
+                // ==========================================
+                // --- TRANSPORTATION ---
+                // ==========================================
+
+                case BusinessTypes.TransitDepot:
+                    // Serves pop passenger mobility needs. Employs primarily
+                    // BlueCollar Commercial workers. Consumes Automobiles as
+                    // its primary operational input. Outputs PopTransport at
+                    // retail (direct passenger service).
+                    // Moderate negative amenity — noisy and trafficked but
+                    // less severe than heavy industry.
+                    b.ZoneType = BusinessZoneType.Commercial;
+                    b.TargetClass = PopSocioeconomicClass.BlueCollar;
+                    b.Outputs.Add(Retail(GoodType.PopTransport), 5000f);
+                    b.InputGoods.Add(Wholesale(GoodType.Automobiles), 20f);
+                    b.InputGoods.Add(Wholesale(GoodType.Electricity), 200f);
+                    b.RequiredLabor.Add(JobRole.BlueCollarCommercial, 100);
+                    b.RequiredLabor.Add(JobRole.WhiteCollarCommercial, 10);
+                    break;
+
+                case BusinessTypes.DistributionHub:
+                    // Serves business-to-business freight movement. Employs
+                    // primarily BlueCollar Industrial workers. Consumes
+                    // Automobiles heavily as operational input. Outputs
+                    // FreightTransport at wholesale (B2B service).
+                    // Slightly worse amenity than TransitDepot — heavy vehicle
+                    // traffic at all hours.
+                    b.ZoneType = BusinessZoneType.Commercial;
+                    b.TargetClass = PopSocioeconomicClass.BlueCollar;
+                    b.Outputs.Add(Wholesale(GoodType.FreightTransport), 10000f);
+                    b.InputGoods.Add(Wholesale(GoodType.Automobiles), 50f);
+                    b.InputGoods.Add(Wholesale(GoodType.Electricity), 300f);
+                    b.RequiredLabor.Add(JobRole.BlueCollarIndustrial, 150);
+                    b.RequiredLabor.Add(JobRole.WhiteCollarCommercial, 15);
+                    break;
             }
             return b;
         }
@@ -922,6 +1012,12 @@ namespace CyberpunkGenerator.Economy
                 // Services
                 { Type: GoodType.MedicalCare } => BusinessTypes.CorpMedClinic,
                 { Type: GoodType.Security } => BusinessTypes.CorpSecPrecinct,
+
+                // Transportation — fulfilled by their respective hubs,
+                // but note these are spawned heuristically in CitySimulator
+                // rather than demand-driven through the standard loop.
+                { Type: GoodType.PopTransport, State: GoodState.Retail } => BusinessTypes.TransitDepot,
+                { Type: GoodType.FreightTransport, State: GoodState.Wholesale } => BusinessTypes.DistributionHub,
 
                 _ => BusinessTypes.Unknown
             };

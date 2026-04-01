@@ -21,7 +21,17 @@ namespace CyberpunkGenerator.Generators
     ///   • Entities are placed in gentrification order (most affluent first).
     ///   • A higher-affluence entity may displace a lower-affluence entity that
     ///     occupies a desirable block, pushing the evicted entity back into the
-    ///     pending queue.
+    ///     pending queue with all its links released.
+    ///   • As each entity is placed, Contract and Patronage links are formed
+    ///     greedily by proximity, reserving capacity on supplier businesses.
+    ///     Displacement releases all links on the evicted entity; links on its
+    ///     counterparties are also released, freeing their capacity for
+    ///     re-assignment when those entities are next placed.
+    ///   • Amenity contributions are scaled by the supplier's remaining capacity
+    ///     using a piecewise threshold (full credit below the threshold, linear
+    ///     decay to zero above it).
+    ///   • Transportation points are calculated as a post-placement derived metric
+    ///     by summing quantity * distance across all formed links.
     /// </summary>
     public class ZoningEngine
     {
@@ -30,8 +40,11 @@ namespace CyberpunkGenerator.Generators
         // Sorted working queue; re-sorted whenever displacements add new items.
         private readonly List<IZoneable> _pendingEntities;
 
-        // All businesses already placed — used for gravity lookups.
+        // All businesses already placed — used for gravity lookups and link formation.
         private readonly List<(Business business, CityBlock block)> _placedBusinesses = new();
+
+        // All pops already placed — used for link formation lookups.
+        private readonly List<(Pop pop, CityBlock block)> _placedPops = new();
 
         // ── Desirability heatmap ─────────────────────────────────────────────
         // Keyed by socioeconomic class, then by grid coordinate.
@@ -74,11 +87,7 @@ namespace CyberpunkGenerator.Generators
             SortPendingEntities();
 
             // Seed: pull the first Mega-Corp Headquarters out of the pending queue
-            // and place it at (0,0) before the loop starts. Using the actual instance
-            // from CitySimulator (rather than creating a new one) means its
-            // RequiredLabor was already counted by the economy loop, and we don't
-            // end up with a duplicate HQ from when that entry reaches the front of
-            // the queue in the main loop.
+            // and place it at (0,0) before the loop starts.
             var seedHQ = _pendingEntities
                 .OfType<Business>()
                 .FirstOrDefault(b => b.BusinessType == BusinessTypes.MegaCorpHeadquarters)
@@ -92,6 +101,7 @@ namespace CyberpunkGenerator.Generators
             seedBlock.TryAddBusiness(seedHQ);
             _placedBusinesses.Add((seedHQ, seedBlock));
             UpdateDesirabilityMap(seedHQ, 0, 0);
+            FormContractLinks(seedHQ, seedBlock);
             Console.WriteLine("[Seed] Mega-Corp Headquarters placed at (0,0).");
 
             Console.WriteLine($"Starting Zoning Engine with {_pendingEntities.Count} entities to place.");
@@ -105,9 +115,6 @@ namespace CyberpunkGenerator.Generators
 
                 PlaceEntity(entity);
 
-                // Re-sort if displacement events added items back — only needed
-                // when the list was modified during PlaceEntity, which is flagged
-                // by displacements having been recorded.
                 if (_displacementsThisPlacement > 0)
                     SortPendingEntities();
 
@@ -127,22 +134,9 @@ namespace CyberpunkGenerator.Generators
 
         private void PlaceEntity(IZoneable entity)
         {
-            // 1. Calculate the gravity target for this entity.
             (float gx, float gy) = CalculateGravityTarget(entity);
             int targetX = (int)Math.Round(gx);
             int targetY = (int)Math.Round(gy);
-
-            // 2. Walk outward from the target in BFS order, scoring every
-            //    coordinate as either:
-            //      a) an existing block that can directly accept the entity, or
-            //      b) an empty space where a new block can be created.
-            //    Also track the closest occupied block whose class is strictly
-            //    lower, which is a displacement candidate.
-            //
-            //    For residential pops, the effective distance is augmented by
-            //    a height penalty: ProjectedFloorCount * HeightPenaltyPerFloor.
-            //    This makes tall blocks less attractive than nearby empty land,
-            //    producing organic density gradients without a hard height cap.
 
             CityBlock? bestDirectFit = null;
             (int x, int y)? bestEmptyCoord = null;
@@ -154,22 +148,15 @@ namespace CyberpunkGenerator.Generators
             queue.Enqueue((targetX, targetY, 0));
             visited.Add((targetX, targetY));
 
-            // Cutoff in terms of raw Manhattan distance. We stop BFS expansion
-            // once the raw distance exceeds the best effective distance found
-            // so far (conservative: a block at raw distance d+1 with zero height
-            // penalty can never beat an effective distance of d).
             float cutoffEffective = float.MaxValue;
 
             while (queue.Count > 0)
             {
                 var (cx, cy, dist) = queue.Dequeue();
 
-                // Prune: raw distance already exceeds best effective distance found.
                 if (dist > cutoffEffective) break;
 
                 var existingBlock = _map.GetBlockAt(cx, cy);
-
-                // Compute effective distance for this coordinate.
                 float effectiveDist = ComputeEffectiveDistance(entity, existingBlock, cx, cy, dist);
 
                 if (existingBlock != null)
@@ -197,11 +184,8 @@ namespace CyberpunkGenerator.Generators
                 }
                 else
                 {
-                    // Empty coordinate — a new block could go here.
                     if (HasPlacedNeighbor(cx, cy))
                     {
-                        // For empty coords the effective distance equals raw distance
-                        // (no height penalty on an empty block).
                         if (bestDirectFit == null &&
                             (dist < bestEffectiveDistance ||
                              (dist == bestEffectiveDistance && _rng.Next(2) == 0)))
@@ -223,7 +207,6 @@ namespace CyberpunkGenerator.Generators
                 }
             }
 
-            // 3. Execute the best option found.
             if (bestDirectFit != null)
             {
                 CommitToBlock(bestDirectFit, entity);
@@ -260,7 +243,6 @@ namespace CyberpunkGenerator.Generators
         {
             if (entity is not Pop pop) return manhattanDist;
 
-            // Determine the sqm this pop (or its floor-capped split) would add.
             int floorCapacity = pop.SocioeconomicClass switch
             {
                 var c => (int)(EconomyBlueprints.FloorHeightSqm / EconomyBlueprints.SqmPerPerson[c])
@@ -270,7 +252,7 @@ namespace CyberpunkGenerator.Generators
 
             int projectedFloor = existingBlock != null
                 ? existingBlock.ProjectedFloorCount(additionalSqm)
-                : 0; // empty block: ground floor, no penalty
+                : 0;
 
             float heightPenalty = projectedFloor * EconomyBlueprints.HeightPenaltyPerFloor;
             return manhattanDist + heightPenalty;
@@ -298,19 +280,10 @@ namespace CyberpunkGenerator.Generators
             }
         }
 
-        /// <summary>
-        /// Pops want to live near two things, blended by weight:
-        ///   1. Their employers (businesses whose RequiredLabor includes their role).
-        ///   2. High-desirability coordinates for their class (from the heatmap).
-        ///
-        /// The amenity contribution is read directly from the precomputed
-        /// desirability map: O(1) lookup, no radius search required.
-        /// </summary>
         private (float x, float y) GravityForPop(Pop pop)
         {
             var popRole = new JobRole(pop.SocioeconomicClass, pop.Field);
 
-            // ── Component 1: employer centroid ───────────────────────────────
             var employers = _placedBusinesses
                 .Where(pb => pb.business.RequiredLabor.ContainsKey(popRole))
                 .ToList();
@@ -319,16 +292,8 @@ namespace CyberpunkGenerator.Generators
                 ? Centroid(employers.Select(pb => (pb.block.X, pb.block.Y)))
                 : (0f, 0f);
 
-            // ── Component 2: amenity-weighted centroid ───────────────────────
-            // Find all coordinates with a non-zero desirability score for this
-            // class, weight each by its score (skip negative — we want to be
-            // attracted toward positive amenities, not repelled from this step),
-            // and compute a weighted centroid.
             (float ax, float ay) = AmenityCentroidForClass(pop.SocioeconomicClass);
 
-            // ── Blend ────────────────────────────────────────────────────────
-            // If amenity data is absent (early generation), fall back entirely
-            // to employer gravity.
             bool hasAmenitySignal = ax != 0f || ay != 0f;
 
             if (!hasAmenitySignal)
@@ -341,19 +306,11 @@ namespace CyberpunkGenerator.Generators
             );
         }
 
-        /// <summary>
-        /// Commercial businesses want to be near their target customers.
-        /// This is a blend of:
-        ///   1. Centroid of blocks where the target class lives.
-        ///   2. Centroid weighted by population density of the target class,
-        ///      so businesses prefer the busiest corners over sparse outskirts.
-        /// </summary>
         private (float x, float y) GravityForCommercialBusiness(Business biz)
         {
             if (!biz.TargetClass.HasValue) return (0f, 0f);
             var cls = biz.TargetClass.Value;
 
-            // ── Component 1: target class block centroid ─────────────────────
             var customerBlocks = _map.AllBlocks
                 .Where(b => b.SocioeconomicLevel == cls && b.Pops.Count > 0)
                 .ToList();
@@ -362,7 +319,6 @@ namespace CyberpunkGenerator.Generators
                 ? Centroid(customerBlocks.Select(b => (b.X, b.Y)))
                 : (0f, 0f);
 
-            // ── Component 2: density-weighted centroid ───────────────────────
             (float dx, float dy) = DensityCentroidForClass(cls);
 
             bool hasDensitySignal = dx != 0f || dy != 0f;
@@ -377,10 +333,6 @@ namespace CyberpunkGenerator.Generators
             );
         }
 
-        /// <summary>
-        /// Industrial businesses want to be near their downstream consumers
-        /// (other businesses that list one of their outputs as an input).
-        /// </summary>
         private (float x, float y) GravityForIndustrialBusiness(Business biz)
         {
             var outputGoods = biz.Outputs.Keys.ToHashSet();
@@ -395,18 +347,180 @@ namespace CyberpunkGenerator.Generators
         }
 
         // ─────────────────────────────────────────────────────────────────────
+        // Contract and Patronage link formation
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Forms Contract links for a newly placed business. For each of its
+        /// InputGoods (excluding Electricity and other freight-excluded goods),
+        /// scans placed businesses that supply that good, sorted by distance,
+        /// and greedily reserves capacity until the need is fully met or all
+        /// suppliers are exhausted.
+        ///
+        /// A single input need may be split across multiple suppliers if no
+        /// single business has sufficient remaining capacity.
+        /// </summary>
+        private void FormContractLinks(Business consumer, CityBlock consumerBlock)
+        {
+            foreach (var (inputGood, requiredQty) in consumer.InputGoods)
+            {
+                // Electricity is infrastructure — no freight contracts.
+                if (EconomyBlueprints.FreightExcludedGoodTypes.Contains(inputGood.Type))
+                    continue;
+
+                float remaining = requiredQty;
+
+                // Find all placed businesses that produce this good, sorted by
+                // ascending distance so the nearest supplier is preferred.
+                var suppliers = _placedBusinesses
+                    .Where(pb => pb.business.Outputs.ContainsKey(inputGood)
+                                 && pb.business.GetRemainingCapacity(inputGood) > 0)
+                    .OrderBy(pb => _map.GetDistance(consumerBlock.X, consumerBlock.Y, pb.block.X, pb.block.Y))
+                    .ToList();
+
+                foreach (var (supplier, supplierBlock) in suppliers)
+                {
+                    if (remaining <= 0f) break;
+
+                    float reserved = supplier.ReserveCapacity(inputGood, remaining);
+                    if (reserved <= 0f) continue;
+
+                    int distance = _map.GetDistance(
+                        consumerBlock.X, consumerBlock.Y,
+                        supplierBlock.X, supplierBlock.Y);
+
+                    var contract = new Contract(consumer, supplier, inputGood, reserved)
+                    {
+                        Distance = distance
+                    };
+
+                    consumer.InboundContracts.Add(contract);
+                    supplier.OutboundContracts.Add(contract);
+
+                    remaining -= reserved;
+                }
+
+                if (remaining > 0f)
+                {
+                    Console.WriteLine($"  [Unmet Contract] {consumer.BusinessType} needs " +
+                                      $"{remaining:N0} more {inputGood} — no supplier capacity available.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Forms Patronage links for a newly placed pop. For each of the pop's
+        /// class needs (excluding housing goods, which generate no transport cost),
+        /// scans placed businesses that supply that good at retail, sorted by
+        /// distance, and greedily reserves capacity until the need is fully met
+        /// or all suppliers are exhausted.
+        ///
+        /// Need quantity is scaled by pop size (needs are defined per 100 people).
+        /// A single need may be split across multiple suppliers.
+        /// </summary>
+        private void FormPatronageLinks(Pop pop, CityBlock popBlock)
+        {
+            if (!EconomyBlueprints.PopNeeds.TryGetValue(pop.SocioeconomicClass, out var needs))
+                return;
+
+            foreach (var (need, quantityPer100) in needs)
+            {
+                // Housing is always distance 0 — no transport cost, skip.
+                if (EconomyBlueprints.HousingGoodTypes.Contains(need.Type))
+                    continue;
+
+                float totalNeeded = quantityPer100 * (pop.Size / 100f);
+                float remaining = totalNeeded;
+
+                // Find all placed businesses that supply this retail good,
+                // sorted by ascending distance so the nearest supplier is preferred.
+                var suppliers = _placedBusinesses
+                    .Where(pb => pb.business.Outputs.ContainsKey(need)
+                                 && pb.business.GetRemainingCapacity(need) > 0)
+                    .OrderBy(pb => _map.GetDistance(popBlock.X, popBlock.Y, pb.block.X, pb.block.Y))
+                    .ToList();
+
+                foreach (var (supplier, supplierBlock) in suppliers)
+                {
+                    if (remaining <= 0f) break;
+
+                    float reserved = supplier.ReserveCapacity(need, remaining);
+                    if (reserved <= 0f) continue;
+
+                    int distance = _map.GetDistance(
+                        popBlock.X, popBlock.Y,
+                        supplierBlock.X, supplierBlock.Y);
+
+                    var patronage = new Patronage(pop, supplier, need, reserved)
+                    {
+                        Distance = distance
+                    };
+
+                    pop.OutboundPatronage.Add(patronage);
+                    supplier.InboundPatronage.Add(patronage);
+
+                    remaining -= reserved;
+                }
+
+                if (remaining > 0f)
+                {
+                    Console.WriteLine($"  [Unmet Patronage] {pop} needs " +
+                                      $"{remaining:N0} more {need} — no supplier capacity available.");
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Transportation point calculation
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Calculates city-wide transportation points by summing across all
+        /// formed Contract and Patronage links. Returns pop transport points
+        /// and freight transport points separately.
+        ///
+        /// Called by ZonedCityGenerator after GenerateMap() completes.
+        /// </summary>
+        public (float popTransport, float freightTransport) CalculateTransportationPoints()
+        {
+            float popTP = 0f;
+            float freightTP = 0f;
+
+            // Pop transport: sum all patronage link transportation points.
+            foreach (var (pop, _) in _placedPops)
+            {
+                foreach (var patronage in pop.OutboundPatronage)
+                    popTP += patronage.TransportationPoints;
+            }
+
+            // Freight transport: sum all contract transportation points.
+            // Use outbound contracts to avoid double-counting (each contract
+            // is registered on both consumer and supplier).
+            foreach (var (biz, _) in _placedBusinesses)
+            {
+                foreach (var contract in biz.OutboundContracts)
+                    freightTP += contract.TransportationPoints;
+            }
+
+            return (popTP, freightTP);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
         // Heatmap updates
         // ─────────────────────────────────────────────────────────────────────
 
         /// <summary>
         /// Called after a business is committed to a block. Spreads the
         /// business's amenity contributions outward up to AmenityWriteRadius
-        /// using inverse-distance decay, updating the desirability map for
+        /// using inverse-distance decay, scaled by the business's current
+        /// capacity utilization multiplier. Updates the desirability map for
         /// every affected coordinate and class.
         /// </summary>
         private void UpdateDesirabilityMap(Business biz, int originX, int originY)
         {
             if (biz.BusinessType == null) return;
+
+            float capacityMultiplier = biz.GetAmenityCapacityMultiplier();
 
             for (int dx = -EconomyBlueprints.AmenityWriteRadius;
                      dx <= EconomyBlueprints.AmenityWriteRadius; dx++)
@@ -422,7 +536,7 @@ namespace CyberpunkGenerator.Generators
                     foreach (PopSocioeconomicClass cls in Enum.GetValues(typeof(PopSocioeconomicClass)))
                     {
                         float contribution = EconomyBlueprints.GetAmenityContribution(
-                            biz.BusinessType, cls, manhattanDist);
+                            biz.BusinessType, cls, manhattanDist, capacityMultiplier);
 
                         if (contribution == 0f) continue;
 
@@ -438,11 +552,14 @@ namespace CyberpunkGenerator.Generators
         /// <summary>
         /// Called after a business is evicted during displacement. Subtracts its
         /// previously written amenity contributions from the desirability map.
-        /// Minor floating-point drift over many displacement cycles is acceptable.
+        /// Uses the same capacity multiplier that was active when the contributions
+        /// were written — minor drift is acceptable.
         /// </summary>
         private void RemoveFromDesirabilityMap(Business biz, int originX, int originY)
         {
             if (biz.BusinessType == null) return;
+
+            float capacityMultiplier = biz.GetAmenityCapacityMultiplier();
 
             for (int dx = -EconomyBlueprints.AmenityWriteRadius;
                      dx <= EconomyBlueprints.AmenityWriteRadius; dx++)
@@ -458,7 +575,7 @@ namespace CyberpunkGenerator.Generators
                     foreach (PopSocioeconomicClass cls in Enum.GetValues(typeof(PopSocioeconomicClass)))
                     {
                         float contribution = EconomyBlueprints.GetAmenityContribution(
-                            biz.BusinessType, cls, manhattanDist);
+                            biz.BusinessType, cls, manhattanDist, capacityMultiplier);
 
                         if (contribution == 0f) continue;
 
@@ -502,16 +619,6 @@ namespace CyberpunkGenerator.Generators
         // Heatmap centroid helpers
         // ─────────────────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Returns a weighted centroid of all coordinates with positive
-        /// desirability for the given class. Coordinates with negative or zero
-        /// desirability are excluded — we want attraction toward amenities,
-        /// not repulsion away from nuisances, in the gravity target calculation.
-        /// (Repulsion is handled implicitly: pops avoid being placed near
-        /// industrial zones because those zones poison the desirability scores
-        /// of nearby coordinates, making those coordinates lose BFS contests
-        /// against cleaner alternatives.)
-        /// </summary>
         private (float x, float y) AmenityCentroidForClass(PopSocioeconomicClass cls)
         {
             var map = _desirabilityMap[cls];
@@ -533,10 +640,6 @@ namespace CyberpunkGenerator.Generators
                 : (0f, 0f);
         }
 
-        /// <summary>
-        /// Returns a weighted centroid of all coordinates where the given class
-        /// has residential population, weighted by headcount.
-        /// </summary>
         private (float x, float y) DensityCentroidForClass(PopSocioeconomicClass cls)
         {
             var map = _populationDensityMap[cls];
@@ -576,17 +679,20 @@ namespace CyberpunkGenerator.Generators
             Console.WriteLine($"  [Gentrify] {DescribeEntity(incoming)} displaces " +
                               $"{block.SocioeconomicLevel} residents at Block {block.Id} ({block.X},{block.Y}).");
 
-            // Evict pops — update density map before re-queuing.
+            // Evict pops — release links, update density map, re-queue.
             foreach (var evictedPop in block.Pops)
             {
+                evictedPop.ReleaseAllLinks();
                 RemoveFromPopulationDensityMap(evictedPop, block.X, block.Y);
+                _placedPops.RemoveAll(pp => pp.pop == evictedPop);
                 _pendingEntities.Add(evictedPop);
                 _displacementsThisPlacement++;
             }
 
-            // Evict businesses — update desirability map before re-queuing.
+            // Evict businesses — release links, update desirability map, re-queue.
             foreach (var evictedBiz in block.Businesses)
             {
+                evictedBiz.ReleaseAllLinks();
                 RemoveFromDesirabilityMap(evictedBiz, block.X, block.Y);
                 _placedBusinesses.RemoveAll(pb => pb.business == evictedBiz);
                 _pendingEntities.Add(evictedBiz);
@@ -635,7 +741,9 @@ namespace CyberpunkGenerator.Generators
                     }
 
                     block.AddPop(pop);
+                    _placedPops.Add((pop, block));
                     UpdatePopulationDensityMap(pop, block.X, block.Y);
+                    FormPatronageLinks(pop, block);
                     Console.WriteLine($"  [Pop]     {pop} → Block {block.Id} ({block.X},{block.Y})");
                     break;
 
@@ -648,6 +756,7 @@ namespace CyberpunkGenerator.Generators
 
                     _placedBusinesses.Add((biz, block));
                     UpdateDesirabilityMap(biz, block.X, block.Y);
+                    FormContractLinks(biz, block);
                     Console.WriteLine($"  [Biz]     {biz.BusinessType} → Block {block.Id} ({block.X},{block.Y})");
                     break;
             }
